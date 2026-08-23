@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Jkudish\LaravelAiLibrarium\Facades\Librarium;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\ResponseStatus;
+use Jkudish\LaravelAiLibrarium\Responses\ResearchError;
 
 it('completes a paid Firecrawl Agent observation through polling', function (): void {
     if (getenv('LIBRARIUM_LIVE_TESTS') !== '1'
@@ -28,7 +29,11 @@ it('completes a paid Firecrawl Agent observation through polling', function (): 
         ->timeout(300)
         ->run();
 
-    expect($response->status)->toBe(ResponseStatus::Succeeded)
+    $errors = $response->errors
+        ->map(static fn (ResearchError $error): string => $error->code.': '.$error->message)
+        ->implode('; ');
+
+    expect($response->status)->toBe(ResponseStatus::Succeeded, $errors)
         ->and($response->results)->toHaveCount(1)
         ->and($response->results->sole()->provenance->collector)->toBe('firecrawl');
 });

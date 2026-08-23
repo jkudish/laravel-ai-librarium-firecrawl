@@ -260,11 +260,36 @@ final readonly class FirecrawlDriver implements Driver
             'properties' => [
                 'completed' => ['type' => 'boolean'],
                 'answer' => ['type' => ['string', 'null'], 'maxLength' => 50000],
-                'citations' => ['type' => 'array', 'maxItems' => 20, 'items' => ['type' => 'object']],
+                'citations' => [
+                    'type' => 'array',
+                    'maxItems' => 20,
+                    'items' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['url'],
+                        'properties' => [
+                            'url' => ['type' => 'string', 'maxLength' => 2048],
+                            'title' => ['type' => ['string', 'null'], 'maxLength' => 500],
+                            'excerpt' => ['type' => ['string', 'null'], 'maxLength' => 1000],
+                        ],
+                    ],
+                ],
                 'challenge' => ['type' => 'string', 'enum' => ['none', 'captcha', 'blocked', 'unknown']],
                 'login_wall' => ['type' => 'boolean'],
                 'latency_ms' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 7200000],
-                'artifacts' => ['type' => 'array', 'maxItems' => 10, 'items' => ['type' => 'object']],
+                'artifacts' => [
+                    'type' => 'array',
+                    'maxItems' => 10,
+                    'items' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['kind', 'url'],
+                        'properties' => [
+                            'kind' => ['type' => 'string', 'enum' => ['screenshot', 'recording', 'trace']],
+                            'url' => ['type' => 'string', 'maxLength' => 2048],
+                        ],
+                    ],
+                ],
             ],
         ];
     }

@@ -255,7 +255,25 @@ it('omits insecure webhook callback URLs from Agent submissions', function (): v
     app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent']));
     $submission = json_decode((string) $history[0]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
 
-    expect($submission)->not->toHaveKey('webhook');
+    expect($submission)->not->toHaveKey('webhook')
+        ->and($submission['schema']['properties']['citations']['items'])->toBe([
+            'type' => 'object',
+            'additionalProperties' => false,
+            'required' => ['url'],
+            'properties' => [
+                'url' => ['type' => 'string', 'maxLength' => 2048],
+                'title' => ['type' => ['string', 'null'], 'maxLength' => 500],
+                'excerpt' => ['type' => ['string', 'null'], 'maxLength' => 1000],
+            ],
+        ])->and($submission['schema']['properties']['artifacts']['items'])->toBe([
+            'type' => 'object',
+            'additionalProperties' => false,
+            'required' => ['kind', 'url'],
+            'properties' => [
+                'kind' => ['type' => 'string', 'enum' => ['screenshot', 'recording', 'trace']],
+                'url' => ['type' => 'string', 'maxLength' => 2048],
+            ],
+        ]);
 });
 
 it('uses a bound terminal webhook only once as a polling wake hint', function (): void {
