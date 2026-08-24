@@ -104,7 +104,7 @@ final readonly class FirecrawlResultMapper
                     'personalization' => $this->optionString($options, 'personalization'),
                     'account_context' => $this->optionString($options, 'account_context'),
                 ], static fn (mixed $value): bool => $value !== null),
-                'evidence_receipts' => $this->artifactReceipts($observation['artifacts']),
+                'evidence_receipts' => $this->artifactReceipts($observation['artifacts'] ?? []),
                 'credits_used' => $creditsUsed,
             ], static fn (mixed $value): bool => $value !== null && $value !== []),
         );
@@ -125,7 +125,7 @@ final readonly class FirecrawlResultMapper
                 'challenge' => ['required', 'string', 'in:none,captcha,blocked,unknown'],
                 'login_wall' => ['required', 'boolean'],
                 'latency_ms' => ['required', 'integer', 'min:0', 'max:7200000'],
-                'artifacts' => ['required', 'array', 'list', 'max:10'],
+                'artifacts' => ['sometimes', 'array', 'list', 'max:10'],
                 'artifacts.*' => ['array:kind,url'],
                 'artifacts.*.kind' => ['required', 'string', 'in:screenshot,recording,trace'],
                 'artifacts.*.url' => ['required', 'url:http,https', 'max:2048'],

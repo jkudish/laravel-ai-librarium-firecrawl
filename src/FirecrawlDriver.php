@@ -256,7 +256,7 @@ final readonly class FirecrawlDriver implements Driver
         return [
             'type' => 'object',
             'additionalProperties' => false,
-            'required' => ['completed', 'answer', 'citations', 'challenge', 'login_wall', 'latency_ms', 'artifacts'],
+            'required' => ['completed', 'answer', 'citations', 'challenge', 'login_wall', 'latency_ms'],
             'properties' => [
                 'completed' => ['type' => 'boolean'],
                 'answer' => ['type' => ['string', 'null'], 'maxLength' => 50000],

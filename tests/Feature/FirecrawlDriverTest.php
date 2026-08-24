@@ -392,3 +392,17 @@ it('reports only invalid field paths without leaking rejected provider values', 
                 ->not->toContain('secret-provider-value');
         });
 });
+
+it('normalizes omitted optional artifacts to no evidence receipts', function (): void {
+    $observation = observation();
+    unset($observation['artifacts']);
+    bindSdk(sdkWith([
+        ['success' => true, 'id' => 'agent-job-1'],
+        ['success' => true, 'status' => 'completed', 'data' => $observation],
+    ]));
+
+    $result = app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent']));
+
+    expect($result->content)->toBe('Observed answer.')
+        ->and($result->providerMeta)->not->toHaveProperty('evidence_receipts');
+});
