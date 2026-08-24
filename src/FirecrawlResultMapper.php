@@ -139,8 +139,11 @@ final readonly class FirecrawlResultMapper
                     $validator->errors()->add('completed', 'requires an answer when no challenge or login wall was observed.');
                 }
             })->validate();
-        } catch (ValidationException) {
-            throw new DriverException('firecrawl.invalid_output', 'Firecrawl returned an invalid surface observation.');
+        } catch (ValidationException $exception) {
+            $fields = implode(', ', array_slice(array_keys($exception->errors()), 0, 5));
+            $suffix = $fields === '' ? '' : ' Invalid fields: '.$fields.'.';
+
+            throw new DriverException('firecrawl.invalid_output', 'Firecrawl returned an invalid surface observation.'.$suffix);
         }
     }
 

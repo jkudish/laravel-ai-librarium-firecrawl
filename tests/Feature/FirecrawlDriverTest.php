@@ -376,3 +376,19 @@ it('fails deterministic validation for incomplete ordinary output and oversized 
     'capability scheme' => [['artifacts' => [['kind' => 'trace', 'url' => 'cdp://browser/session']]]],
     'unknown field' => [['raw_payload' => 'forbidden']],
 ]);
+
+it('reports only invalid field paths without leaking rejected provider values', function (): void {
+    bindSdk(sdkWith([
+        ['success' => true, 'id' => 'agent-job-1'],
+        ['success' => true, 'status' => 'completed', 'data' => observation([
+            'citations' => [['url' => 'not-a-url', 'excerpt' => 'secret-provider-value']],
+        ])],
+    ]));
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent'])))
+        ->toThrow(function (DriverException $exception): void {
+            expect($exception->getMessage())->toContain('Invalid fields: citations.0.url.')
+                ->not->toContain('not-a-url')
+                ->not->toContain('secret-provider-value');
+        });
+});
