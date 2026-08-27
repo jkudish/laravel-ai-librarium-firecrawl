@@ -153,6 +153,26 @@ it('maps unexpected interaction failures to a fixed safe stage error', function 
         });
 });
 
+it('maps unexpected Agent transport failures to the fixed interaction stage error', function (): void {
+    app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
+    {
+        public function forRequest(DriverRequest $request): FirecrawlClient
+        {
+            throw new RuntimeException('secret-key https://provider.test/path agent-id headers body stack');
+        }
+    });
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent'])))
+        ->toThrow(function (DriverException $exception): void {
+            expect($exception->errorCode)->toBe('firecrawl.interaction_failed')
+                ->and($exception->getMessage())->toBe('Firecrawl could not complete the interaction stage.')
+                ->and($exception->getPrevious())->toBeNull()
+                ->and($exception->getMessage())->not->toContain('secret-key')
+                ->not->toContain('provider.test')
+                ->not->toContain('agent-id');
+        });
+});
+
 it('maps unexpected observation failures to a fixed safe stage error', function (): void {
     bindSdk(sdkWith([
         ['success' => true, 'data' => ['markdown' => 'initial', 'metadata' => ['scrapeId' => 'scrape-secret']]],
