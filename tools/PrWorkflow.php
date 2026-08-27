@@ -413,8 +413,23 @@ final class PrWorkflow
      */
     private function currentPullRequest(array $environment): array
     {
+        $branch = $this->git(['branch', '--show-current'], $environment);
+
+        if ($branch === '' || strlen($branch) > 255) {
+            throw new RuntimeException('Git did not resolve a valid current branch for pull-request lookup.');
+        }
+
         $output = $this->successful(
-            ($this->runner)('gh', ['pr', 'view', '--repo', self::EXPECTED_REPOSITORY, '--json', 'headRefOid,state'], ['env' => $environment]),
+            ($this->runner)('gh', [
+                'pr',
+                'view',
+                '--repo',
+                self::EXPECTED_REPOSITORY,
+                '--json',
+                'headRefOid,state',
+                '--',
+                $branch,
+            ], ['env' => $environment]),
             'gh pr view',
         );
 
@@ -501,20 +516,29 @@ final class PrWorkflow
     private static function runProcess(string $command, array $arguments, array $options = []): array
     {
         $inherit = $options['inherit'] ?? false;
-        $output = $inherit ? null : tmpfile();
+        $stdoutHandle = $inherit ? null : tmpfile();
+        $stderrHandle = $inherit ? null : tmpfile();
 
-        if (! $inherit && $output === false) {
+        if (! $inherit && (! is_resource($stdoutHandle) || ! is_resource($stderrHandle))) {
+            if (is_resource($stdoutHandle)) {
+                fclose($stdoutHandle);
+            }
+
+            if (is_resource($stderrHandle)) {
+                fclose($stderrHandle);
+            }
+
             return ['status' => 1, 'stdout' => '', 'stderr' => 'Could not create process output storage.'];
         }
 
         if ($inherit) {
             $descriptors = [STDIN, STDOUT, STDERR];
         } else {
-            if (! is_resource($output)) {
+            if (! is_resource($stdoutHandle) || ! is_resource($stderrHandle)) {
                 return ['status' => 1, 'stdout' => '', 'stderr' => 'Could not create process output storage.'];
             }
 
-            $descriptors = [STDIN, $output, $output];
+            $descriptors = [STDIN, $stdoutHandle, $stderrHandle];
         }
 
         $pipes = [];
@@ -523,8 +547,12 @@ final class PrWorkflow
         ]);
 
         if (! is_resource($process)) {
-            if (is_resource($output)) {
-                fclose($output);
+            if (is_resource($stdoutHandle)) {
+                fclose($stdoutHandle);
+            }
+
+            if (is_resource($stderrHandle)) {
+                fclose($stderrHandle);
             }
 
             return ['status' => 1, 'stdout' => '', 'stderr' => 'The process could not start.'];
@@ -532,14 +560,21 @@ final class PrWorkflow
 
         $status = proc_close($process);
         $stdout = '';
+        $stderr = '';
 
-        if (is_resource($output)) {
-            rewind($output);
-            $stdout = (string) stream_get_contents($output);
-            fclose($output);
+        if (is_resource($stdoutHandle)) {
+            rewind($stdoutHandle);
+            $stdout = (string) stream_get_contents($stdoutHandle);
+            fclose($stdoutHandle);
         }
 
-        return ['status' => $status, 'stdout' => $stdout, 'stderr' => ''];
+        if (is_resource($stderrHandle)) {
+            rewind($stderrHandle);
+            $stderr = (string) stream_get_contents($stderrHandle);
+            fclose($stderrHandle);
+        }
+
+        return ['status' => $status, 'stdout' => $stdout, 'stderr' => $stderr];
     }
 
     private static function removeDirectory(string $directory): void

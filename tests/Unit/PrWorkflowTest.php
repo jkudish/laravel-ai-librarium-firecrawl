@@ -33,6 +33,7 @@ function prRunner(
     string $extension = "gh signoff\tbasecamp/gh-signoff\tv1.0.0",
     ?string $failingCheck = null,
     string $phpVersion = '8.4.12',
+    string $branch = 'feat/exact-sha-signoff',
 ): array {
     $directory = sys_get_temp_dir().'/firecrawl-pr-workflow-test-'.bin2hex(random_bytes(8));
     mkdir($directory, 0700, true);
@@ -44,6 +45,7 @@ function prRunner(
 
     $run = function (string $command, array $arguments, array $options = []) use (
         $calls,
+        $branch,
         $extension,
         $failingCheck,
         $headSequence,
@@ -72,6 +74,10 @@ function prRunner(
 
         if ($command === 'git' && $arguments[0] === 'rev-parse' && $arguments[1] === '--git-path') {
             return prSuccess($path."\n");
+        }
+
+        if ($command === 'git' && $arguments === ['branch', '--show-current']) {
+            return prSuccess($branch."\n");
         }
 
         if ($command === 'php' && $arguments[0] === '-r') {
@@ -357,6 +363,18 @@ it('requires the gh-signoff extension and a valid open PR at the SHA', function 
     'mismatched PR head' => ["gh signoff\tbasecamp/gh-signoff\tv1", ['headRefOid' => PR_OTHER_SHA, 'state' => 'OPEN'], 'head does not match'],
 ]);
 
+it('requires a valid current branch for the pinned pull-request lookup', function (): void {
+    $mock = prRunner(branch: '');
+    $workflow = new PrWorkflow($mock['run'], ['PATH' => '/usr/bin', 'HOME' => '/home/user', 'GH_SIGNOFF_TOKEN' => 'token']);
+    prWriteReceipt($mock['path'], prValidReceipt($workflow));
+
+    expect(fn () => $workflow->signoff(PR_SHA))->toThrow(RuntimeException::class, 'valid current branch');
+    expect(array_filter(
+        $mock['calls']->getArrayCopy(),
+        fn (array $call): bool => $call['command'] === 'gh' && $call['arguments'][0] === 'signoff',
+    ))->toBe([]);
+});
+
 it('requires the dedicated token after read-only eligibility checks', function (): void {
     $mock = prRunner();
     $workflow = new PrWorkflow($mock['run'], ['PATH' => '/usr/bin', 'HOME' => '/home/user']);
@@ -418,6 +436,8 @@ it('maps the dedicated token only for the exact unforced signoff command', funct
             PrWorkflow::EXPECTED_REPOSITORY,
             '--json',
             'headRefOid,state',
+            '--',
+            'feat/exact-sha-signoff',
         ]);
     }
 
