@@ -115,3 +115,39 @@ It requires `LIBRARIUM_LIVE_TESTS=1`, `FIRECRAWL_API_KEY`, a target URL, and the
 documented default request ceiling of 2,500 credits; actual credit-to-currency
 cost depends on the consumer's Firecrawl plan. This command must not be run
 without fresh authorization for that provider spend.
+
+Pull requests can produce repository-owned Amp-orb evidence with:
+
+```bash
+composer pr:check
+```
+
+The command requires a clean commit, runs the ordered offline package checks in
+an allowlist environment with a disposable home and no GitHub, signoff,
+Firecrawl, other provider, or Composer credentials, then writes a mode-`0600`
+receipt beneath Git administrative storage. The receipt binds the full commit
+SHA, verification-plan ID, PHP `^8.4` compatibility policy and 8.4.0 floor, and
+the bounded PHP, Composer, operating-system, and architecture evidence actually
+used. Changing the commit, plan, runtime policy, or actual runtime invalidates
+eligibility.
+
+After a human separately approves the exact full lowercase SHA, the local
+pull-request skill may run:
+
+```bash
+composer pr:signoff -- --approved-sha <full-sha>
+```
+
+The guarded command also requires an open GitHub pull request at that remote
+head and the `basecamp/gh-signoff` extension. It maps `GH_SIGNOFF_TOKEN` to
+`GH_TOKEN` only for the final exact `gh signoff --commit <sha>` call and never
+uses force. The fine-grained token should be limited to this repository with
+**Contents: read**, **Pull requests: read**, and **Commit statuses: read/write**.
+Read-only PR inspection uses the existing GitHub CLI login instead of the
+signoff token.
+
+This status attestation is not cryptographic commit signing, self-approval,
+merge approval, ruleset setup, release, publication, deployment, production
+verification, or live-provider evidence. See
+[the pull-request verification skill](.agents/skills/verifying-pull-requests/SKILL.md)
+for the exact approval and failure boundaries.
