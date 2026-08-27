@@ -14,8 +14,10 @@ to this repository with:
 - Commit statuses: read/write
 
 The workflow maps that value to `GH_TOKEN` only for the final
-`gh signoff --commit <sha>` process. `gh pr view` uses the existing GitHub CLI
-login with ambient token variables removed.
+`gh signoff --commit <sha>` process and pins `GH_REPO` to
+`jkudish/laravel-ai-librarium-firecrawl`. `gh pr view` explicitly targets the
+same repository using the existing GitHub CLI login with ambient token
+variables removed.
 
 Installing an extension, provisioning a token, changing repository rulesets or
 required checks, and posting the first real status are separate authorized

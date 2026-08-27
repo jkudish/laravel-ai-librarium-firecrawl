@@ -12,6 +12,8 @@ final class PrWorkflow
 {
     public const RECEIPT_VERSION = 1;
 
+    public const EXPECTED_REPOSITORY = 'jkudish/laravel-ai-librarium-firecrawl';
+
     /** @var list<array{command: string, arguments: list<string>}> */
     public const CHECK_STEPS = [
         ['command' => 'composer', 'arguments' => ['validate', '--strict']],
@@ -124,15 +126,7 @@ final class PrWorkflow
 
         $this->requireValidReceipt($receipt, $sha, $currentRuntime);
         $this->requireSignoffExtension($readEnvironment);
-        $pullRequest = $this->currentPullRequest($readEnvironment);
-
-        if (($pullRequest['state'] ?? null) !== 'OPEN') {
-            throw new RuntimeException('The current branch must have an open pull request.');
-        }
-
-        if (($pullRequest['headRefOid'] ?? null) !== $sha) {
-            throw new RuntimeException('The open pull request head does not match the approved SHA.');
-        }
+        $this->requireOpenPullRequestAtSha($sha, $readEnvironment);
 
         $token = $this->environment['GH_SIGNOFF_TOKEN'] ?? '';
 
@@ -140,6 +134,7 @@ final class PrWorkflow
             throw new RuntimeException('GH_SIGNOFF_TOKEN is required for the final signoff status write.');
         }
 
+        $this->requireOpenPullRequestAtSha($sha, $readEnvironment);
         $this->requireCleanWorktree($readEnvironment);
 
         if ($this->headSha($readEnvironment) !== $sha) {
@@ -148,6 +143,7 @@ final class PrWorkflow
 
         $signoffEnvironment = $readEnvironment;
         $signoffEnvironment['GH_TOKEN'] = $token;
+        $signoffEnvironment['GH_REPO'] = self::EXPECTED_REPOSITORY;
         $this->successful(
             ($this->runner)('gh', ['signoff', '--commit', $sha], [
                 'env' => $signoffEnvironment,
@@ -164,6 +160,7 @@ final class PrWorkflow
         try {
             $encoded = json_encode([
                 'steps' => self::CHECK_STEPS,
+                'repository' => self::EXPECTED_REPOSITORY,
                 'runtimePolicy' => $this->runtimePolicy(),
             ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
         } catch (JsonException $exception) {
@@ -396,6 +393,20 @@ final class PrWorkflow
         }
     }
 
+    /** @param array<string, string> $environment */
+    private function requireOpenPullRequestAtSha(string $sha, array $environment): void
+    {
+        $pullRequest = $this->currentPullRequest($environment);
+
+        if (($pullRequest['state'] ?? null) !== 'OPEN') {
+            throw new RuntimeException('The current branch must have an open pull request.');
+        }
+
+        if (($pullRequest['headRefOid'] ?? null) !== $sha) {
+            throw new RuntimeException('The open pull request head does not match the approved SHA.');
+        }
+    }
+
     /**
      * @param  array<string, string>  $environment
      * @return array<string, mixed>
@@ -403,7 +414,7 @@ final class PrWorkflow
     private function currentPullRequest(array $environment): array
     {
         $output = $this->successful(
-            ($this->runner)('gh', ['pr', 'view', '--json', 'headRefOid,state'], ['env' => $environment]),
+            ($this->runner)('gh', ['pr', 'view', '--repo', self::EXPECTED_REPOSITORY, '--json', 'headRefOid,state'], ['env' => $environment]),
             'gh pr view',
         );
 
@@ -490,27 +501,45 @@ final class PrWorkflow
     private static function runProcess(string $command, array $arguments, array $options = []): array
     {
         $inherit = $options['inherit'] ?? false;
-        $descriptors = $inherit
-            ? [STDIN, STDOUT, STDERR]
-            : [STDIN, ['pipe', 'w'], ['pipe', 'w']];
+        $output = $inherit ? null : tmpfile();
+
+        if (! $inherit && $output === false) {
+            return ['status' => 1, 'stdout' => '', 'stderr' => 'Could not create process output storage.'];
+        }
+
+        if ($inherit) {
+            $descriptors = [STDIN, STDOUT, STDERR];
+        } else {
+            if (! is_resource($output)) {
+                return ['status' => 1, 'stdout' => '', 'stderr' => 'Could not create process output storage.'];
+            }
+
+            $descriptors = [STDIN, $output, $output];
+        }
+
         $pipes = [];
         $process = proc_open([$command, ...$arguments], $descriptors, $pipes, null, $options['env'] ?? null, [
             'bypass_shell' => true,
         ]);
 
         if (! is_resource($process)) {
+            if (is_resource($output)) {
+                fclose($output);
+            }
+
             return ['status' => 1, 'stdout' => '', 'stderr' => 'The process could not start.'];
         }
 
-        $stdout = $inherit ? '' : (string) stream_get_contents($pipes[1]);
-        $stderr = $inherit ? '' : (string) stream_get_contents($pipes[2]);
+        $status = proc_close($process);
+        $stdout = '';
 
-        if (! $inherit) {
-            fclose($pipes[1]);
-            fclose($pipes[2]);
+        if (is_resource($output)) {
+            rewind($output);
+            $stdout = (string) stream_get_contents($output);
+            fclose($output);
         }
 
-        return ['status' => proc_close($process), 'stdout' => $stdout, 'stderr' => $stderr];
+        return ['status' => $status, 'stdout' => $stdout, 'stderr' => ''];
     }
 
     private static function removeDirectory(string $directory): void

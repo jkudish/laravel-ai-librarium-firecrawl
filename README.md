@@ -139,12 +139,13 @@ composer pr:signoff -- --approved-sha <full-sha>
 ```
 
 The guarded command also requires an open GitHub pull request at that remote
-head and the `basecamp/gh-signoff` extension. It maps `GH_SIGNOFF_TOKEN` to
-`GH_TOKEN` only for the final exact `gh signoff --commit <sha>` call and never
-uses force. The fine-grained token should be limited to this repository with
-**Contents: read**, **Pull requests: read**, and **Commit statuses: read/write**.
-Read-only PR inspection uses the existing GitHub CLI login instead of the
-signoff token.
+head in `jkudish/laravel-ai-librarium-firecrawl` and the
+`basecamp/gh-signoff` extension. It maps `GH_SIGNOFF_TOKEN` to `GH_TOKEN` only
+for the final exact `gh signoff --commit <sha>` call, pins `GH_REPO` to this
+repository, and never uses force. The fine-grained token should be limited to
+this repository with **Contents: read**, **Pull requests: read**, and **Commit
+statuses: read/write**. Read-only PR inspection uses the existing GitHub CLI
+login instead of the signoff token.
 
 This status attestation is not cryptographic commit signing, self-approval,
 merge approval, ruleset setup, release, publication, deployment, production

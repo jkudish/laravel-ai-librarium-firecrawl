@@ -25,8 +25,9 @@ the worktree.
 dirty tree, local HEAD mismatch or drift, absent/link/malformed/oversized or
 stale receipt, wrong receipt version/SHA/plan/success/runtime, missing
 `basecamp/gh-signoff`, invalid/closed PR, or remote-head mismatch. Read-only
-GitHub inspection uses the existing CLI login while excluding ambient tokens.
-Only the final exact status call receives `GH_SIGNOFF_TOKEN` as `GH_TOKEN`:
+GitHub inspection pins `jkudish/laravel-ai-librarium-firecrawl`, uses the
+existing CLI login, and excludes ambient tokens. Only the final exact status
+call receives `GH_SIGNOFF_TOKEN` as `GH_TOKEN`; `GH_REPO` pins the same target:
 
 ```bash
 gh signoff --commit <full-sha>

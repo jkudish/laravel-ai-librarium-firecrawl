@@ -36,6 +36,7 @@ function prRunner(
 ): array {
     $directory = sys_get_temp_dir().'/firecrawl-pr-workflow-test-'.bin2hex(random_bytes(8));
     mkdir($directory, 0700, true);
+    prTemporaryDirectories()->append($directory);
     $path = $directory.'/'.PR_SHA.'.json';
     $calls = new ArrayObject;
     $headIndex = 0;
@@ -62,7 +63,7 @@ function prRunner(
             return prSuccess($value."\n");
         }
 
-        if ($command === 'git' && $arguments[0] === 'status') {
+        if ($command === 'git' && $arguments === ['status', '--porcelain=v1', '--untracked-files=all']) {
             $value = $worktreeSequence[min($worktreeIndex, count($worktreeSequence) - 1)];
             $worktreeIndex++;
 
@@ -126,10 +127,23 @@ function prWriteReceipt(string $path, array|string $receipt): void
     chmod($path, 0600);
 }
 
+/** @return ArrayObject<int, string> */
+function prTemporaryDirectories(): ArrayObject
+{
+    static $directories;
+
+    return $directories ??= new ArrayObject;
+}
+
 afterEach(function (): void {
-    foreach (glob(sys_get_temp_dir().'/firecrawl-pr-workflow-test-*') ?: [] as $directory) {
+    $directories = array_reverse(prTemporaryDirectories()->getArrayCopy());
+    prTemporaryDirectories()->exchangeArray([]);
+
+    foreach ($directories as $directory) {
         foreach (glob($directory.'/*') ?: [] as $path) {
-            unlink($path);
+            if (is_link($path) || is_file($path)) {
+                unlink($path);
+            }
         }
 
         rmdir($directory);
@@ -299,6 +313,25 @@ it('rejects a receipt whose permission mode is no longer 0600', function (): voi
     expect(array_filter($mock['calls']->getArrayCopy(), fn (array $call): bool => $call['command'] === 'gh'))->toBe([]);
 });
 
+it('rejects symlinked and oversized receipts', function (string $kind, string $message): void {
+    $mock = prRunner();
+    $workflow = new PrWorkflow($mock['run'], ['PATH' => '/usr/bin', 'HOME' => '/home/user', 'GH_SIGNOFF_TOKEN' => 'token']);
+
+    if ($kind === 'symlink') {
+        $target = dirname($mock['path']).'/target.json';
+        prWriteReceipt($target, prValidReceipt($workflow));
+        symlink($target, $mock['path']);
+    } else {
+        prWriteReceipt($mock['path'], str_repeat('x', 65_537));
+    }
+
+    expect(fn () => $workflow->signoff(PR_SHA))->toThrow(RuntimeException::class, $message);
+    expect(array_filter($mock['calls']->getArrayCopy(), fn (array $call): bool => $call['command'] === 'gh'))->toBe([]);
+})->with([
+    'symlink' => ['symlink', 'No readable verification receipt'],
+    'oversized' => ['oversized', 'malformed or too large'],
+]);
+
 it('rejects receipt runtime evidence that differs from the current runtime', function (): void {
     $mock = prRunner(phpVersion: '8.4.13');
     $workflow = new PrWorkflow($mock['run'], ['PATH' => '/usr/bin', 'HOME' => '/home/user', 'GH_SIGNOFF_TOKEN' => 'token']);
@@ -371,9 +404,24 @@ it('maps the dedicated token only for the exact unforced signoff command', funct
         ->and($signoffCall['arguments'])->not->toContain('--force')
         ->and($signoffCall['arguments'])->not->toContain('-f')
         ->and($signoffCall['options']['env']['GH_TOKEN'])->toBe('status-token')
+        ->and($signoffCall['options']['env']['GH_REPO'])->toBe(PrWorkflow::EXPECTED_REPOSITORY)
         ->and($signoffCall['options']['env'])->not->toHaveKeys(['GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY']);
 
-    foreach (array_slice($githubCalls, 0, -1) as $call) {
+    $pullRequestCalls = array_values(array_filter($githubCalls, fn (array $call): bool => $call['arguments'][0] === 'pr'));
+    expect($pullRequestCalls)->toHaveCount(2);
+
+    foreach ($pullRequestCalls as $call) {
+        expect($call['arguments'])->toBe([
+            'pr',
+            'view',
+            '--repo',
+            PrWorkflow::EXPECTED_REPOSITORY,
+            '--json',
+            'headRefOid,state',
+        ]);
+    }
+
+    foreach (array_slice($mock['calls']->getArrayCopy(), 0, -1) as $call) {
         expect($call['options']['env'])->not->toHaveKeys(['GH_TOKEN', 'GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY']);
     }
 });
