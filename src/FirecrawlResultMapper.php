@@ -20,6 +20,8 @@ use Jkudish\LaravelAiLibrarium\Responses\Source;
 
 final readonly class FirecrawlResultMapper
 {
+    private const int MAX_CREDITS_USED = 2_147_483_647;
+
     public function __construct(private ValidationFactory $validator) {}
 
     /** @return array<array-key, mixed> */
@@ -41,8 +43,15 @@ final readonly class FirecrawlResultMapper
     }
 
     /** @param array<array-key, mixed> $observation */
-    public function result(DriverRequest $request, array $observation, ?string $model = null, ?int $creditsUsed = null): ResearchResult
-    {
+    public function result(
+        DriverRequest $request,
+        array $observation,
+        ?string $model = null,
+        ?int $creditsUsed = null,
+        ?string $mode = null,
+        ?string $cleanup = null,
+        ?int $providerOperationsStarted = null,
+    ): ResearchResult {
         $this->validate($observation);
         $options = $request->profile->options;
         $challenge = $this->string($observation, 'challenge');
@@ -105,9 +114,36 @@ final readonly class FirecrawlResultMapper
                     'account_context' => $this->optionString($options, 'account_context'),
                 ], static fn (mixed $value): bool => $value !== null),
                 'evidence_receipts' => $this->artifactReceipts($observation['artifacts'] ?? []),
-                'credits_used' => $creditsUsed,
+                'operation_receipt' => $this->operationReceipt($mode, $cleanup, $providerOperationsStarted),
+                'credits_used' => $this->boundedCredits($creditsUsed),
             ], static fn (mixed $value): bool => $value !== null && $value !== []),
         );
+    }
+
+    /** @return array{mode: string, stage: 'observation', cleanup: string, provider_operations_started: int}|null */
+    private function operationReceipt(?string $mode, ?string $cleanup, ?int $providerOperationsStarted): ?array
+    {
+        if (! in_array($mode, ['interact', 'agent'], true)
+            || ! in_array($cleanup, ['completed', 'failed', 'not_started', 'not_applicable'], true)
+            || $providerOperationsStarted === null
+            || $providerOperationsStarted < 0
+            || $providerOperationsStarted > 10_000) {
+            return null;
+        }
+
+        return [
+            'mode' => $mode,
+            'stage' => 'observation',
+            'cleanup' => $cleanup,
+            'provider_operations_started' => $providerOperationsStarted,
+        ];
+    }
+
+    private function boundedCredits(?int $creditsUsed): ?int
+    {
+        return $creditsUsed !== null && $creditsUsed >= 0 && $creditsUsed <= self::MAX_CREDITS_USED
+            ? $creditsUsed
+            : null;
     }
 
     /** @param array<array-key, mixed> $value */

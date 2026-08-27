@@ -30,6 +30,8 @@ final readonly class FirecrawlDriver implements Driver
 {
     private const int LIBRARIUM_CEILING_SECONDS = 7200;
 
+    private const int MAX_PROVIDER_OPERATIONS = 10_000;
+
     public function __construct(
         private CreatesFirecrawlClient $clients,
         private PromptInteractClient $interact,
@@ -64,58 +66,90 @@ final readonly class FirecrawlDriver implements Driver
         } catch (DriverException $exception) {
             throw $exception;
         } catch (Throwable) {
-            throw new DriverException('firecrawl.provider', 'Firecrawl could not complete the surface observation.');
+            throw new DriverException('firecrawl.interaction_failed', 'Firecrawl could not complete the interaction stage.');
         }
     }
 
     private function runInteract(DriverRequest $request): ResearchResult
     {
-        $options = $request->profile->options;
-        $firecrawl = $this->clients->forRequest($request);
-        $country = $this->option($options, 'country');
-        $locale = $this->option($options, 'locale');
-        $location = $country !== null || $locale !== null
-            ? LocationConfig::with(country: $country, languages: $locale === null ? null : [$locale])
-            : null;
-        $document = $firecrawl->scrape(
-            $this->requiredOption($options, 'target_url'),
-            ScrapeOptions::with(
-                formats: ['markdown'],
-                mobile: $this->option($options, 'device') === 'mobile',
-                location: $location,
-                removeBase64Images: true,
-            ),
-        );
-        $this->ensureBeforeDeadline($request, 'Firecrawl did not finish scraping before the research deadline.');
-        $scrapeId = $document->getMetadata()['scrapeId'] ?? null;
-        if (! is_string($scrapeId) || trim($scrapeId) === '') {
-            throw new DriverException('firecrawl.invalid_response', 'Firecrawl returned no scrape identifier.');
-        }
+        $providerOperationsStarted = 0;
 
         try {
-            $request->progress('Firecrawl is interacting with the configured consumer surface.');
-            $response = $this->interact->interact($request, $scrapeId, $this->interactionPrompt($request));
-            $output = $response['output'] ?? null;
-            if (! is_string($output)) {
-                throw new DriverException('firecrawl.invalid_response', 'Firecrawl returned no interaction output.');
+            $options = $request->profile->options;
+            $firecrawl = $this->clients->forRequest($request);
+            $country = $this->option($options, 'country');
+            $locale = $this->option($options, 'locale');
+            $location = $country !== null || $locale !== null
+                ? LocationConfig::with(country: $country, languages: $locale === null ? null : [$locale])
+                : null;
+            $providerOperationsStarted = $this->operationStarted($providerOperationsStarted);
+            $document = $firecrawl->scrape(
+                $this->requiredOption($options, 'target_url'),
+                ScrapeOptions::with(
+                    formats: ['markdown'],
+                    mobile: $this->option($options, 'device') === 'mobile',
+                    location: $location,
+                    removeBase64Images: true,
+                ),
+            );
+            $this->ensureBeforeDeadline($request, 'Firecrawl did not finish scraping before the research deadline.');
+            $scrapeId = $document->getMetadata()['scrapeId'] ?? null;
+            if (! is_string($scrapeId) || trim($scrapeId) === '') {
+                throw new DriverException('firecrawl.invalid_response', 'Firecrawl returned no scrape identifier.');
+            }
+        } catch (DriverException $exception) {
+            throw $exception;
+        } catch (Throwable) {
+            throw new DriverException('firecrawl.scrape_failed', 'Firecrawl could not complete the scrape stage.');
+        }
+
+        $cleanup = 'not_started';
+        try {
+            try {
+                $request->progress('Firecrawl is interacting with the configured consumer surface.');
+                $providerOperationsStarted = $this->operationStarted($providerOperationsStarted);
+                $response = $this->interact->interact($request, $scrapeId, $this->interactionPrompt($request));
+                $output = $response['output'] ?? null;
+                if (! is_string($output)) {
+                    throw new DriverException('firecrawl.invalid_response', 'Firecrawl returned no interaction output.');
+                }
+            } catch (DriverException $exception) {
+                throw $exception;
+            } catch (Throwable) {
+                throw new DriverException('firecrawl.interaction_failed', 'Firecrawl could not complete the interaction stage.');
             }
 
-            return $this->mapper->result($request, $this->mapper->decode($output));
+            $observation = $this->decodeObservation($output);
         } finally {
             try {
-                $this->clients->forRequest($request)->stopInteractiveBrowser($scrapeId);
+                $firecrawl = $this->clients->forRequest($request);
+                $providerOperationsStarted = $this->operationStarted($providerOperationsStarted);
+                $firecrawl->stopInteractiveBrowser($scrapeId);
+                $cleanup = 'completed';
             } catch (Throwable) {
+                $cleanup = 'failed';
                 // Cleanup is best effort and must neither exceed the active deadline nor replace the observation.
             }
         }
+
+        return $this->mapObservation(
+            $request,
+            $observation,
+            mode: 'interact',
+            cleanup: $cleanup,
+            providerOperationsStarted: $providerOperationsStarted,
+        );
     }
 
     private function runAgent(DriverRequest $request): ResearchResult
     {
+        $providerOperationsStarted = 0;
         $startedAt = CarbonImmutable::now();
         $deadline = $this->earlier($request->deadline, $startedAt->addSeconds(self::LIBRARIUM_CEILING_SECONDS));
         $webhook = $this->webhook($request);
-        $start = $this->clients->forRequest($request)->startAgent(AgentOptions::with(
+        $firecrawl = $this->clients->forRequest($request);
+        $providerOperationsStarted = $this->operationStarted($providerOperationsStarted);
+        $start = $firecrawl->startAgent(AgentOptions::with(
             urls: [$this->requiredOption($request->profile->options, 'target_url')],
             prompt: $this->agentPrompt($request),
             schema: $this->schema(),
@@ -142,7 +176,9 @@ final readonly class FirecrawlDriver implements Driver
         $request->progress('Firecrawl Agent accepted the surface observation job.');
 
         while (true) {
-            $status = $this->clients->forRequest($request)->getAgentStatus($jobId);
+            $firecrawl = $this->clients->forRequest($request);
+            $providerOperationsStarted = $this->operationStarted($providerOperationsStarted);
+            $status = $firecrawl->getAgentStatus($jobId);
             $deadline = $this->providerDeadline($status, $deadline);
             $state = $status->getStatus();
 
@@ -157,7 +193,15 @@ final readonly class FirecrawlDriver implements Driver
                     throw new DriverException('firecrawl.invalid_output', 'Firecrawl returned invalid Agent observation data.');
                 }
 
-                return $this->mapper->result($request, $data, $status->getModel(), $status->getCreditsUsed());
+                return $this->mapObservation(
+                    $request,
+                    $data,
+                    $status->getModel(),
+                    $status->getCreditsUsed(),
+                    mode: 'agent',
+                    cleanup: 'not_applicable',
+                    providerOperationsStarted: $providerOperationsStarted,
+                );
             }
             if (in_array($state, ['failed', 'cancelled'], true)) {
                 throw new DriverException('firecrawl.agent_failed', 'Firecrawl could not complete the surface observation.');
@@ -189,6 +233,50 @@ final readonly class FirecrawlDriver implements Driver
                 Sleep::for($seconds)->seconds();
             }
         }
+    }
+
+    /** @return array<array-key, mixed> */
+    private function decodeObservation(string $output): array
+    {
+        try {
+            return $this->mapper->decode($output);
+        } catch (DriverException $exception) {
+            throw $exception;
+        } catch (Throwable) {
+            throw new DriverException('firecrawl.observation_failed', 'Firecrawl could not map the surface observation.');
+        }
+    }
+
+    /** @param array<array-key, mixed> $observation */
+    private function mapObservation(
+        DriverRequest $request,
+        array $observation,
+        ?string $model = null,
+        ?int $creditsUsed = null,
+        string $mode = 'agent',
+        string $cleanup = 'not_applicable',
+        ?int $providerOperationsStarted = null,
+    ): ResearchResult {
+        try {
+            return $this->mapper->result(
+                $request,
+                $observation,
+                $model,
+                $creditsUsed,
+                $mode,
+                $cleanup,
+                $providerOperationsStarted,
+            );
+        } catch (DriverException $exception) {
+            throw $exception;
+        } catch (Throwable) {
+            throw new DriverException('firecrawl.observation_failed', 'Firecrawl could not map the surface observation.');
+        }
+    }
+
+    private function operationStarted(?int $count): ?int
+    {
+        return $count === null || $count >= self::MAX_PROVIDER_OPERATIONS ? null : $count + 1;
     }
 
     private function validateRequest(DriverRequest $request): void

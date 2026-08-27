@@ -8,6 +8,7 @@ use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
+use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
@@ -18,7 +19,9 @@ use Jkudish\LaravelAiLibrarium\Responses\Enums\Corpus;
 use Jkudish\LaravelAiLibrarium\Webhooks\WebhookSignalStore;
 use Jkudish\LaravelAiLibrariumFirecrawl\Contracts\CreatesFirecrawlClient;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlDriver;
+use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlResultMapper;
 use Jkudish\LaravelAiLibrariumFirecrawl\Tests\Support\CreatesRequests;
+use Mockery\MockInterface;
 
 uses(CreatesRequests::class);
 
@@ -100,8 +103,94 @@ it('uses the SDK for scrape and cleanup while normalizing prompt interaction fac
             'reference_sha256' => hash('sha256', 'https://artifacts.example/one'),
             'reference_state' => 'redacted',
         ]])
+        ->and($result->providerMeta->operation_receipt)->toBe([
+            'mode' => 'interact',
+            'stage' => 'observation',
+            'cleanup' => 'completed',
+            'provider_operations_started' => 3,
+        ])
         ->and($result->citations)->toHaveCount(1)
         ->and($factory->count)->toBe(2);
+});
+
+it('maps unexpected scrape failures to a fixed safe stage error', function (): void {
+    app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
+    {
+        public function forRequest(DriverRequest $request): FirecrawlClient
+        {
+            throw new RuntimeException('secret-key https://provider.test/path scrape-id headers body stack');
+        }
+    });
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request()))
+        ->toThrow(function (DriverException $exception): void {
+            expect($exception->errorCode)->toBe('firecrawl.scrape_failed')
+                ->and($exception->getMessage())->toBe('Firecrawl could not complete the scrape stage.')
+                ->and($exception->getPrevious())->toBeNull()
+                ->and($exception->getMessage())->not->toContain('secret-key')
+                ->not->toContain('provider.test')
+                ->not->toContain('scrape-id');
+        });
+});
+
+it('maps unexpected interaction failures to a fixed safe stage error', function (): void {
+    bindSdk(sdkWith([
+        ['success' => true, 'data' => ['markdown' => 'initial', 'metadata' => ['scrapeId' => 'scrape-secret']]],
+        ['success' => true],
+    ]));
+    Http::fake(static function (): never {
+        throw new RuntimeException('secret-key https://provider.test/path scrape-secret headers body stack');
+    });
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request()))
+        ->toThrow(function (DriverException $exception): void {
+            expect($exception->errorCode)->toBe('firecrawl.interaction_failed')
+                ->and($exception->getMessage())->toBe('Firecrawl could not complete the interaction stage.')
+                ->and($exception->getPrevious())->toBeNull()
+                ->and($exception->getMessage())->not->toContain('secret-key')
+                ->not->toContain('provider.test')
+                ->not->toContain('scrape-secret');
+        });
+});
+
+it('maps unexpected observation failures to a fixed safe stage error', function (): void {
+    bindSdk(sdkWith([
+        ['success' => true, 'data' => ['markdown' => 'initial', 'metadata' => ['scrapeId' => 'scrape-secret']]],
+        ['success' => true],
+    ]));
+    Http::fake(['*' => Http::response(['success' => true, 'output' => json_encode(observation(), JSON_THROW_ON_ERROR)])]);
+    $validator = Mockery::mock(ValidationFactory::class, function (MockInterface $mock): void {
+        $mock->shouldReceive('make')
+            ->andThrow(new RuntimeException('secret-key https://provider.test/path scrape-secret headers body stack'));
+    });
+    app()->instance(FirecrawlResultMapper::class, new FirecrawlResultMapper($validator));
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request()))
+        ->toThrow(function (DriverException $exception): void {
+            expect($exception->errorCode)->toBe('firecrawl.observation_failed')
+                ->and($exception->getMessage())->toBe('Firecrawl could not map the surface observation.')
+                ->and($exception->getPrevious())->toBeNull()
+                ->and($exception->getMessage())->not->toContain('secret-key')
+                ->not->toContain('provider.test')
+                ->not->toContain('scrape-secret');
+        });
+});
+
+it('preserves specific driver errors across stage boundaries', function (): void {
+    app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
+    {
+        public function forRequest(DriverRequest $request): FirecrawlClient
+        {
+            throw new DriverException('firecrawl.connection', 'Firecrawl could not be reached.', false);
+        }
+    });
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request()))
+        ->toThrow(function (DriverException $exception): void {
+            expect($exception->errorCode)->toBe('firecrawl.connection')
+                ->and($exception->getMessage())->toBe('Firecrawl could not be reached.')
+                ->and($exception->fallbackAllowed)->toBeFalse();
+        });
 });
 
 it('rejects incompatible grounding and corpora before creating an SDK client', function (GroundingPolicy $grounding, array $corpora): void {
@@ -190,8 +279,34 @@ it('submits and retrieves an Agent job through the official SDK', function (): v
     expect($result->content)->toBe('Observed answer.')
         ->and($result->model)->toBe('spark')
         ->and($result->providerMeta->credits_used)->toBe(9)
+        ->and($result->providerMeta->operation_receipt)->toBe([
+            'mode' => 'agent',
+            'stage' => 'observation',
+            'cleanup' => 'not_applicable',
+            'provider_operations_started' => 2,
+        ])
         ->and($factory->count)->toBe(2);
 });
+
+it('omits provider credits outside the bounded nonnegative range', function (int $credits): void {
+    bindSdk(sdkWith([
+        ['success' => true, 'id' => 'agent-job-1'],
+        ['success' => true, 'status' => 'completed', 'data' => observation(), 'creditsUsed' => $credits],
+    ]));
+
+    $result = app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent']));
+
+    expect($result->providerMeta)->not->toHaveProperty('credits_used')
+        ->and(array_keys($result->providerMeta->operation_receipt))->toBe([
+            'mode',
+            'stage',
+            'cleanup',
+            'provider_operations_started',
+        ]);
+})->with([
+    'negative' => -1,
+    'above interoperable bound' => 2_147_483_648,
+]);
 
 it('does not let best-effort browser cleanup start after the request deadline', function (): void {
     $history = [];
@@ -230,6 +345,12 @@ it('does not let best-effort browser cleanup start after the request deadline', 
     $result = app(FirecrawlDriver::class)->run($this->request(deadlineSeconds: 2));
 
     expect($result->content)->toBe('Observed answer.')
+        ->and($result->providerMeta->operation_receipt)->toBe([
+            'mode' => 'interact',
+            'stage' => 'observation',
+            'cleanup' => 'failed',
+            'provider_operations_started' => 3,
+        ])
         ->and($history)->toHaveCount(1);
 });
 
