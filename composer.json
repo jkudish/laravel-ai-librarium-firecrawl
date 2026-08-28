@@ -36,6 +36,8 @@
         "test": "vendor/bin/pest tests/Feature",
         "analyse": "vendor/bin/phpstan analyse --memory-limit=1G",
         "format": "vendor/bin/pint --test",
+        "pr:check": "@php tools/pr-check.php",
+        "pr:signoff": "@php tools/pr-signoff.php",
         "test:live": [
             "@php -r \"if (getenv('LIBRARIUM_LIVE_TESTS') !== '1') { fwrite(STDERR, 'LIBRARIUM_LIVE_TESTS=1 is required.\\n'); exit(1); }\"",
             "@php -r \"if (getenv('FIRECRAWL_LIVE_SPEND_ACK') !== 'acknowledge-2500-credit-maximum') { fwrite(STDERR, 'The exact Firecrawl spend acknowledgement is required.\\n'); exit(1); }\"",
