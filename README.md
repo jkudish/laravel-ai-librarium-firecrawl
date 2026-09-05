@@ -22,7 +22,8 @@ FIRECRAWL_API_KEY=fc-your-api-key
 // config/firecrawl-librarium.php
 'register_profile' => true,
 'profile' => [
-    // Keep the shipped semantic fields, then configure:
+    // Keep the shipped surface_observation / surface_snapshot /
+    // surface_collector semantic fields, then configure:
     'options' => [
         'mode' => 'interact', // default; use "agent" for async collection
         'target_url' => 'https://example.ai/',
@@ -63,13 +64,19 @@ authenticated browser context.
   browser payloads are never retained.
 - Challenge and login-wall results are observations of one configured surface
   and context, not universal truth.
+- Every newly executed Firecrawl Profile must use the canonical surface triple:
+  `result_kind: surface_observation`, `observation: surface_snapshot`, and the
+  sole retrieval method `surface_collector`. Applications upgrading a published
+  Profile must replace the former `grounded_answer` / `research_agent` fields;
+  Librarium rejects contradictory surface configurations instead of coercing
+  them.
 - `personalization` (`present|absent|unknown`) and `account_context`
   (`signed_out|unknown`) are constrained consumer declarations. Core 1.0
-  provenance context currently accepts only locale, country, device, and
-  authentication, so these declarations remain explicitly labelled under
-  `provider_meta.consumer_declared_context`; they are not represented as
-  collector-measured provenance facts. A future core contract would be required
-  before they can move into provenance context.
+  exposes bounded measured-personalization provenance, but Firecrawl does not
+  measure these consumer-provided declarations. They therefore remain explicitly
+  labelled under `provider_meta.consumer_declared_context`; they are never
+  promoted to `provenance.context.personalization`. Broader account-context
+  provenance remains outside this adapter contract.
 - Delayed and stalled progress remains nonterminal until the earlier trustworthy
   provider deadline, request deadline, or Librarium two-hour ceiling.
 

@@ -22,11 +22,11 @@ return [
         'driver' => FirecrawlDriver::class,
         'provider' => 'firecrawl',
         'model' => null,
-        'result_kind' => 'grounded_answer',
+        'result_kind' => 'surface_observation',
         'grounding' => 'optional',
         'observation' => 'surface_snapshot',
         'corpora' => ['web'],
-        'retrieval_methods' => ['research_agent'],
+        'retrieval_methods' => ['surface_collector'],
         'prompt' => '{{ query }}',
         'enabled' => true,
         'options' => [

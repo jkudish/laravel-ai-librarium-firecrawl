@@ -9,6 +9,7 @@ use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Validation\ValidationException;
 use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
 use Jkudish\LaravelAiLibrarium\Execution\DriverRequest;
+use Jkudish\LaravelAiLibrarium\Profiles\Enums\ObservationMode;
 use Jkudish\LaravelAiLibrarium\Responses\Citation;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\Authentication;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\CitationDerivation;
@@ -101,6 +102,7 @@ final readonly class FirecrawlResultMapper
                 collector: 'firecrawl',
                 surface: $this->optionString($options, 'surface'),
                 context: $context,
+                observationMode: ObservationMode::SurfaceSnapshot,
             ),
             citations: collect($citations),
             completedAt: $now,

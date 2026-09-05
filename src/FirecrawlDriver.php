@@ -283,10 +283,10 @@ final readonly class FirecrawlDriver implements Driver
     {
         if ($request->profile->provider !== 'firecrawl'
             || $request->profile->observation !== ObservationMode::SurfaceSnapshot
-            || $request->profile->resultKind !== ResultKind::GroundedAnswer
+            || $request->profile->resultKind !== ResultKind::SurfaceObservation
             || $request->profile->grounding !== GroundingPolicy::Optional
             || $request->profile->corpora->values()->all() !== [Corpus::Web]
-            || $request->profile->retrievalMethods->values()->all() !== [RetrievalMethod::ResearchAgent]) {
+            || $request->profile->retrievalMethods->values()->all() !== [RetrievalMethod::SurfaceCollector]) {
             throw new DriverException('firecrawl.invalid_profile', 'The Firecrawl Profile has incompatible surface semantics.', false);
         }
         if (blank($request->profile->credential)) {
