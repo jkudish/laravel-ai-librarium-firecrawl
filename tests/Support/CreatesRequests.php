@@ -21,6 +21,7 @@ trait CreatesRequests
      * @param  array<string, mixed>  $options
      * @param  Closure(string, string): void|null  $progress
      * @param  list<Corpus>  $corpora
+     * @param  list<RetrievalMethod>  $retrievalMethods
      */
     private function request(
         array $options = [],
@@ -28,17 +29,20 @@ trait CreatesRequests
         int $deadlineSeconds = 300,
         GroundingPolicy $grounding = GroundingPolicy::Optional,
         array $corpora = [Corpus::Web],
+        ResultKind $resultKind = ResultKind::SurfaceObservation,
+        ObservationMode $observation = ObservationMode::SurfaceSnapshot,
+        array $retrievalMethods = [RetrievalMethod::SurfaceCollector],
     ): DriverRequest {
         $profile = new Profile(
             id: 'firecrawl-surface',
             driver: FirecrawlDriver::class,
             provider: 'firecrawl',
             model: null,
-            resultKind: ResultKind::GroundedAnswer,
+            resultKind: $resultKind,
             grounding: $grounding,
-            observation: ObservationMode::SurfaceSnapshot,
+            observation: $observation,
             corpora: collect($corpora),
-            retrievalMethods: collect([RetrievalMethod::ResearchAgent]),
+            retrievalMethods: collect($retrievalMethods),
             prompt: '{{ query }}',
             enabled: true,
             options: [

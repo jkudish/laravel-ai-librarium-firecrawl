@@ -14,8 +14,11 @@ use Illuminate\Support\Sleep;
 use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
 use Jkudish\LaravelAiLibrarium\Execution\DriverRequest;
 use Jkudish\LaravelAiLibrarium\Profiles\Enums\GroundingPolicy;
+use Jkudish\LaravelAiLibrarium\Profiles\Enums\ObservationMode;
 use Jkudish\LaravelAiLibrarium\ResearchState;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\Corpus;
+use Jkudish\LaravelAiLibrarium\Responses\Enums\ResultKind;
+use Jkudish\LaravelAiLibrarium\Responses\Enums\RetrievalMethod;
 use Jkudish\LaravelAiLibrarium\Webhooks\WebhookSignalStore;
 use Jkudish\LaravelAiLibrariumFirecrawl\Contracts\CreatesFirecrawlClient;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlDriver;
@@ -227,6 +230,26 @@ it('rejects incompatible grounding and corpora before creating an SDK client', f
     'no grounding' => [GroundingPolicy::None, [Corpus::Web]],
     'extra corpus' => [GroundingPolicy::Optional, [Corpus::Web, Corpus::News]],
     'wrong corpus' => [GroundingPolicy::Optional, [Corpus::News]],
+]);
+
+it('rejects incompatible surface identity before creating an SDK client', function (
+    ResultKind $resultKind,
+    ObservationMode $observationMode,
+    array $retrievalMethods,
+): void {
+    $factory = bindSdk(sdkWith([]));
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request(
+        ['mode' => 'agent'],
+        resultKind: $resultKind,
+        observation: $observationMode,
+        retrievalMethods: $retrievalMethods,
+    )))->toThrow(DriverException::class, 'incompatible surface semantics');
+    expect($factory->count)->toBe(0);
+})->with([
+    'legacy result kind' => [ResultKind::GroundedAnswer, ObservationMode::SurfaceSnapshot, [RetrievalMethod::SurfaceCollector]],
+    'legacy retrieval method' => [ResultKind::SurfaceObservation, ObservationMode::SurfaceSnapshot, [RetrievalMethod::ResearchAgent]],
+    'API output mode' => [ResultKind::SurfaceObservation, ObservationMode::ApiOutput, [RetrievalMethod::SurfaceCollector]],
 ]);
 
 it('rejects invalid consumer-declared context before creating an SDK client', function (array $options): void {
