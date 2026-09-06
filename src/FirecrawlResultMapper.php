@@ -80,12 +80,7 @@ final readonly class FirecrawlResultMapper
             );
         }
 
-        $context = array_filter([
-            'locale' => $this->optionString($options, 'locale'),
-            'country' => $this->optionString($options, 'country'),
-            'device' => $this->optionString($options, 'device'),
-            'authentication' => Authentication::from($this->optionString($options, 'authentication') ?? 'anonymous'),
-        ], static fn (mixed $value): bool => $value !== null);
+        $context = ['authentication' => Authentication::Unknown];
         $now = CarbonImmutable::now();
 
         return ResearchResult::make(
@@ -112,9 +107,18 @@ final readonly class FirecrawlResultMapper
                 'challenge' => $challenge,
                 'login_wall' => $loginWall,
                 'consumer_declared_context' => array_filter([
+                    'locale' => $this->optionString($options, 'locale'),
+                    'country' => $this->optionString($options, 'country'),
+                    'device' => $this->optionString($options, 'device'),
+                    'authentication' => $this->optionString($options, 'authentication'),
                     'personalization' => $this->optionString($options, 'personalization'),
                     'account_context' => $this->optionString($options, 'account_context'),
                 ], static fn (mixed $value): bool => $value !== null),
+                'configured_context' => $mode === 'interact' ? array_filter([
+                    'locale' => $this->optionString($options, 'locale'),
+                    'country' => $this->optionString($options, 'country'),
+                    'device' => $this->optionString($options, 'device'),
+                ], static fn (mixed $value): bool => $value !== null) : [],
                 'evidence_receipts' => $this->artifactReceipts($observation['artifacts'] ?? []),
                 'operation_receipt' => $this->operationReceipt($mode, $cleanup, $providerOperationsStarted),
                 'credits_used' => $this->boundedCredits($creditsUsed),

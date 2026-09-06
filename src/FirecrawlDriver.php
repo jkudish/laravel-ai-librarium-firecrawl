@@ -311,7 +311,7 @@ final readonly class FirecrawlDriver implements Driver
             && array_intersect(['locale', 'country', 'device'], array_keys($request->profile->options)) !== []) {
             throw new DriverException(
                 'firecrawl.invalid_options',
-                'Firecrawl Agent mode cannot guarantee locale, country, or device context; use Interact mode for those facts.',
+                'Firecrawl Agent mode cannot guarantee locale, country, or device context; use Interact mode for those controls.',
                 false,
             );
         }
