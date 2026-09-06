@@ -28,10 +28,12 @@ FIRECRAWL_API_KEY=fc-your-api-key
         'mode' => 'interact', // default; use "agent" for async collection
         'target_url' => 'https://example.ai/',
         'surface' => 'example-ai',
+        // Execution policy; not a claim about a target account:
         'authentication' => 'anonymous',
-        // Consumer declarations, not provider-measured facts:
+        // Consumer declarations, not provider-observed facts:
         'personalization' => 'unknown', // present|absent|unknown
         'account_context' => 'signed_out', // signed_out|unknown
+        // Explicit Interact controls (unsupported in Agent mode):
         'locale' => 'en-CA',
         'country' => 'CA',
         'device' => 'desktop',
@@ -39,7 +41,7 @@ FIRECRAWL_API_KEY=fc-your-api-key
 ],
 ```
 
-Anonymous collection is the only currently accepted authentication mode.
+Anonymous collection is the only currently accepted execution policy.
 Consumers own credentials, persistence, evidence policy, and any future
 authenticated browser context.
 
@@ -47,10 +49,23 @@ authenticated browser context.
 
 - `interact` mode uses the official SDK for the initial scrape and browser
   cleanup. A narrow Laravel HTTP seam sends the prompt-only Interact request.
+  Firecrawl documents a clean initial browser and reuse of that scrape session;
+  neither establishes per-target authentication or personalization. See the
+  [Interact documentation](https://docs.firecrawl.dev/features/interact).
 - `agent` mode uses official SDK `startAgent()` and `getAgentStatus()` calls.
   Polling is authoritative; signed webhooks are idempotent wake hints.
   Because the Agent API has no location/device controls, Agent Profiles reject
   locale, country, and device options rather than claiming unenforced context.
+- Every new result records canonical `provenance.context.authentication` as
+  `unknown`: anonymous execution does not attest to the target account state.
+  Explicitly supplied `locale`, `country`, `device`, `authentication`,
+  `personalization`, and `account_context` options remain labelled as consumer
+  declarations under `provider_meta.consumer_declared_context`. Interact
+  results additionally record only the explicitly configured locale, country,
+  and device controls under `provider_meta.configured_context`; Agent results
+  never emit configured controls. An omitted device still sends the SDK's
+  existing `mobile: false` request default, but that default is not recorded as
+  a desktop declaration or configured fact.
 - Output is accepted only after deterministic validation. Citations are limited
   to 20 and excerpts to 1,000 characters. Artifact input is shape-checked and
   capped at 10. Each artifact becomes a bounded receipt containing its
@@ -71,14 +86,20 @@ authenticated browser context.
   Librarium rejects contradictory surface configurations instead of coercing
   them.
 - `personalization` (`present|absent|unknown`) and `account_context`
-  (`signed_out|unknown`) are constrained consumer declarations. Core 1.0
-  exposes bounded measured-personalization provenance, but Firecrawl does not
-  measure these consumer-provided declarations. They therefore remain explicitly
-  labelled under `provider_meta.consumer_declared_context`; they are never
-  promoted to `provenance.context.personalization`. Broader account-context
-  provenance remains outside this adapter contract.
+  (`signed_out|unknown`) are constrained consumer declarations. Firecrawl does
+  not detect authentication or personalization, so these declarations are
+  never promoted to canonical provenance facts.
 - Delayed and stalled progress remains nonterminal until the earlier trustworthy
   provider deadline, request deadline, or Librarium two-hour ceiling.
+
+### Context metadata migration
+
+Historical serialized results are not rewritten or backfilled: their former
+locale, country, device, and anonymous authentication provenance round-trips
+unchanged. New results use the truthful layers above. Consumers that compare
+canonical context objects byte-for-byte across old and new results must account
+for that intentional version boundary; compare the labelled declaration and
+configured-control metadata when those distinctions matter.
 
 ### Temporary Interact seam
 

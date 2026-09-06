@@ -28,17 +28,21 @@ use Mockery\MockInterface;
 
 uses(CreatesRequests::class);
 
-function sdkWith(array $responses): FirecrawlClient
+function sdkWith(array $responses, ?array &$history = null): FirecrawlClient
 {
     $mock = new MockHandler(array_map(
         static fn (array $body): Response => new Response(200, ['Content-Type' => 'application/json'], json_encode($body, JSON_THROW_ON_ERROR)),
         $responses,
     ));
+    $stack = HandlerStack::create($mock);
+    if ($history !== null) {
+        $stack->push(Middleware::history($history));
+    }
 
     return FirecrawlClient::create(
         apiKey: 'fc-test-key',
         apiUrl: 'https://api.firecrawl.test',
-        httpClient: new Client(['handler' => HandlerStack::create($mock)]),
+        httpClient: new Client(['handler' => $stack]),
     );
 }
 
@@ -75,11 +79,12 @@ function observation(array $overrides = []): array
     ];
 }
 
-it('uses the SDK for scrape and cleanup while normalizing prompt interaction facts', function (): void {
+it('keeps declared context separate from configured Interact controls and actual request options', function (): void {
+    $history = [];
     $factory = bindSdk(sdkWith([
         ['success' => true, 'data' => ['markdown' => 'initial', 'metadata' => ['scrapeId' => 'scrape-1']]],
         ['success' => true],
-    ]));
+    ], $history));
     Http::fake(['*' => Http::response(['success' => true, 'output' => json_encode(observation(), JSON_THROW_ON_ERROR)])]);
 
     $request = $this->request([
@@ -94,12 +99,21 @@ it('uses the SDK for scrape and cleanup while normalizing prompt interaction fac
     expect($result->content)->toBe('Observed answer.')
         ->and($result->provenance->surface)->toBe('example-ai')
         ->and($result->provenance->collector)->toBe('firecrawl')
-        ->and($result->provenance->context['authentication']->value)->toBe('anonymous')
-        ->and($result->provenance->context['country'])->toBe('CA')
+        ->and($result->provenance->context['authentication']->value)->toBe('unknown')
+        ->and($result->provenance->context)->not->toHaveKeys(['locale', 'country', 'device'])
         ->and($result->providerMeta->challenge)->toBe('none')
         ->and($result->providerMeta->consumer_declared_context)->toBe([
+            'locale' => 'en-CA',
+            'country' => 'CA',
+            'device' => 'mobile',
+            'authentication' => 'anonymous',
             'personalization' => 'absent',
             'account_context' => 'signed_out',
+        ])
+        ->and($result->providerMeta->configured_context)->toBe([
+            'locale' => 'en-CA',
+            'country' => 'CA',
+            'device' => 'mobile',
         ])
         ->and($result->providerMeta->evidence_receipts)->toBe([[
             'kind' => 'screenshot',
@@ -114,7 +128,62 @@ it('uses the SDK for scrape and cleanup while normalizing prompt interaction fac
         ])
         ->and($result->citations)->toHaveCount(1)
         ->and($factory->count)->toBe(2);
+
+    $scrape = json_decode((string) $history[0]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
+    expect($scrape['location'])->toBe(['country' => 'CA', 'languages' => ['en-CA']])
+        ->and($scrape['mobile'])->toBeTrue();
 });
+
+it('distinguishes absent and explicit Interact device controls without changing SDK defaults', function (
+    array $options,
+    bool $mobile,
+    ?string $configuredDevice,
+): void {
+    $history = [];
+    bindSdk(sdkWith([
+        ['success' => true, 'data' => ['markdown' => 'initial', 'metadata' => ['scrapeId' => 'scrape-1']]],
+        ['success' => true],
+    ], $history));
+    Http::fake(['*' => Http::response(['success' => true, 'output' => json_encode(observation(), JSON_THROW_ON_ERROR)])]);
+
+    $result = app(FirecrawlDriver::class)->run($this->request($options));
+    $scrape = json_decode((string) $history[0]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
+
+    expect($scrape['mobile'])->toBe($mobile)
+        ->and($result->provenance->context['authentication']->value)->toBe('unknown')
+        ->and($result->providerMeta->consumer_declared_context)
+        ->toBe($configuredDevice === null
+            ? ['authentication' => 'anonymous']
+            : ['device' => $configuredDevice, 'authentication' => 'anonymous']);
+
+    if ($configuredDevice === null) {
+        expect($result->providerMeta)->not->toHaveProperty('configured_context');
+    } else {
+        expect($result->providerMeta->configured_context)->toBe(['device' => $configuredDevice]);
+    }
+})->with([
+    'device absent' => [[], false, null],
+    'desktop explicitly configured' => [['device' => 'desktop'], false, 'desktop'],
+    'mobile explicitly configured' => [['device' => 'mobile'], true, 'mobile'],
+]);
+
+it('retains each personalization declaration without promoting it to canonical context', function (string $personalization): void {
+    $result = app(FirecrawlResultMapper::class)->result(
+        $this->request(['mode' => 'agent', 'personalization' => $personalization]),
+        observation(),
+        mode: 'agent',
+        cleanup: 'not_applicable',
+        providerOperationsStarted: 2,
+    );
+
+    expect($result->provenance->context)->toHaveCount(1)
+        ->and($result->provenance->context['authentication']->value)->toBe('unknown')
+        ->and($result->providerMeta->consumer_declared_context)->toBe([
+            'authentication' => 'anonymous',
+            'personalization' => $personalization,
+        ])
+        ->and($result->providerMeta)->not->toHaveProperty('configured_context');
+})->with(['present', 'unknown', 'absent']);
 
 it('maps unexpected scrape failures to a fixed safe stage error', function (): void {
     app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
@@ -263,6 +332,20 @@ it('rejects invalid consumer-declared context before creating an SDK client', fu
     'unsupported account claim' => [['account_context' => 'premium-account']],
 ]);
 
+it('rejects each unsupported Agent control before creating a client or sending HTTP', function (array $control): void {
+    $factory = bindSdk(sdkWith([]));
+    Http::fake();
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent', ...$control])))
+        ->toThrow(DriverException::class, 'use Interact mode for those controls');
+    expect($factory->count)->toBe(0);
+    Http::assertNothingSent();
+})->with([
+    'locale' => [['locale' => 'en-CA']],
+    'country' => [['country' => 'CA']],
+    'device' => [['device' => 'desktop']],
+]);
+
 it('retains only explicitly allowlisted non-capability artifact references', function (): void {
     config()->set('firecrawl-librarium.public_artifact_references', [
         'https://artifacts.example/public/shot.png',
@@ -321,6 +404,9 @@ it('submits and retrieves an Agent job through the official SDK', function (): v
 
     expect($result->content)->toBe('Observed answer.')
         ->and($result->model)->toBe('spark')
+        ->and($result->provenance->context['authentication']->value)->toBe('unknown')
+        ->and($result->providerMeta->consumer_declared_context)->toBe(['authentication' => 'anonymous'])
+        ->and($result->providerMeta)->not->toHaveProperty('configured_context')
         ->and($result->providerMeta->credits_used)->toBe(9)
         ->and($result->providerMeta->operation_receipt)->toBe([
             'mode' => 'agent',

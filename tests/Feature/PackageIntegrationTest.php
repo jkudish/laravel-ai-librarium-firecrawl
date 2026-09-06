@@ -14,8 +14,10 @@ use Jkudish\LaravelAiLibrarium\Execution\DriverRequest;
 use Jkudish\LaravelAiLibrarium\Facades\Librarium;
 use Jkudish\LaravelAiLibrarium\Profile;
 use Jkudish\LaravelAiLibrarium\Profiles\Enums\ObservationMode;
+use Jkudish\LaravelAiLibrarium\Responses\Enums\Authentication;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\ResultKind;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\RetrievalMethod;
+use Jkudish\LaravelAiLibrarium\Responses\ResearchResult;
 use Jkudish\LaravelAiLibrariumFirecrawl\Contracts\CreatesFirecrawlClient;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlDriver;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlResultMapper;
@@ -92,6 +94,11 @@ function packageIntegrationProfile(string $mode): array
         'authentication' => 'anonymous',
         'personalization' => 'absent',
         'account_context' => 'signed_out',
+        ...($mode === 'interact' ? [
+            'locale' => 'en-CA',
+            'country' => 'CA',
+            'device' => 'desktop',
+        ] : []),
     ];
 
     return $profile;
@@ -147,8 +154,14 @@ it('runs each provider mode through core preflight and result acceptance', funct
         ->and($result->provenance->observationMode)->toBe(ObservationMode::SurfaceSnapshot)
         ->and($result->provenance->collector)->toBe('firecrawl')
         ->and($result->provenance->surface)->toBe('example-ai')
-        ->and($result->provenance->context)->not->toHaveKeys(['personalization', 'account_context'])
+        ->and($result->provenance->context)->toBe(['authentication' => Authentication::Unknown])
         ->and($result->providerMeta->consumer_declared_context)->toBe([
+            ...($mode === 'interact' ? [
+                'locale' => 'en-CA',
+                'country' => 'CA',
+                'device' => 'desktop',
+            ] : []),
+            'authentication' => 'anonymous',
             'personalization' => 'absent',
             'account_context' => 'signed_out',
         ])
@@ -161,6 +174,16 @@ it('runs each provider mode through core preflight and result acceptance', funct
             $mode === 'interact' ? 'completed' : 'not_applicable',
         )
         ->and($factory->count)->toBe(2);
+
+    if ($mode === 'interact') {
+        expect($result->providerMeta->configured_context)->toBe([
+            'locale' => 'en-CA',
+            'country' => 'CA',
+            'device' => 'desktop',
+        ]);
+    } else {
+        expect($result->providerMeta)->not->toHaveProperty('configured_context');
+    }
 })->with(['interact', 'agent']);
 
 it('rejects legacy Firecrawl surface semantics during core preflight without reaching the provider', function (): void {
@@ -175,9 +198,15 @@ it('rejects legacy Firecrawl surface semantics during core preflight without rea
     expect($factory->count)->toBe(0);
 });
 
-it('serializes only the allowlisted operation receipt through the core result contract', function (): void {
+it('retains both context metadata layers through terminal core serialization', function (): void {
     $result = app(FirecrawlResultMapper::class)->result(
-        $this->request(['mode' => 'agent']),
+        $this->request([
+            'locale' => 'en-CA',
+            'country' => 'CA',
+            'device' => 'mobile',
+            'personalization' => 'present',
+            'account_context' => 'unknown',
+        ]),
         [
             'completed' => true,
             'answer' => 'Observed answer.',
@@ -187,23 +216,59 @@ it('serializes only the allowlisted operation receipt through the core result co
             'latency_ms' => 25,
         ],
         creditsUsed: 0,
-        mode: 'agent',
-        cleanup: 'not_applicable',
-        providerOperationsStarted: 2,
+        mode: 'interact',
+        cleanup: 'completed',
+        providerOperationsStarted: 3,
     );
+    $serialized = $result->toArray();
+    $roundTrip = ResearchResult::fromArray($serialized)->toArray();
 
-    expect($result->toArray()['provider_meta'])->toMatchArray([
-        'operation_receipt' => [
-            'mode' => 'agent',
-            'stage' => 'observation',
-            'cleanup' => 'not_applicable',
-            'provider_operations_started' => 2,
+    expect($serialized['provenance']['context'])->toBe(['authentication' => 'unknown'])
+        ->and($serialized['provider_meta'])->toMatchArray([
+            'consumer_declared_context' => [
+                'locale' => 'en-CA',
+                'country' => 'CA',
+                'device' => 'mobile',
+                'authentication' => 'anonymous',
+                'personalization' => 'present',
+                'account_context' => 'unknown',
+            ],
+            'configured_context' => [
+                'locale' => 'en-CA',
+                'country' => 'CA',
+                'device' => 'mobile',
+            ],
+            'operation_receipt' => [
+                'mode' => 'interact',
+                'stage' => 'observation',
+                'cleanup' => 'completed',
+                'provider_operations_started' => 3,
+            ],
+            'credits_used' => 0,
+        ])->and(json_encode($roundTrip, JSON_THROW_ON_ERROR))
+        ->toBe(json_encode($serialized, JSON_THROW_ON_ERROR));
+});
+
+it('round-trips historical Firecrawl provenance without backfilling new metadata', function (): void {
+    $historical = app(FirecrawlResultMapper::class)->result(
+        $this->request(),
+        [
+            'completed' => true,
+            'answer' => 'Historical observed answer.',
+            'citations' => [['url' => 'https://example.com/historical-source']],
+            'challenge' => 'none',
+            'login_wall' => false,
+            'latency_ms' => 25,
         ],
-        'credits_used' => 0,
-    ])->and(array_keys($result->providerMeta->operation_receipt))->toBe([
-        'mode',
-        'stage',
-        'cleanup',
-        'provider_operations_started',
-    ]);
+    )->toArray();
+    $historical['provenance']['context'] = [
+        'locale' => 'en-CA',
+        'country' => 'CA',
+        'device' => 'desktop',
+        'authentication' => 'anonymous',
+    ];
+    unset($historical['provider_meta']->consumer_declared_context, $historical['provider_meta']->configured_context);
+
+    expect(json_encode(ResearchResult::fromArray($historical)->toArray(), JSON_THROW_ON_ERROR))
+        ->toBe(json_encode($historical, JSON_THROW_ON_ERROR));
 });
