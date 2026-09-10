@@ -5,12 +5,20 @@ declare(strict_types=1);
 namespace Jkudish\LaravelAiLibrariumFirecrawl\Tests;
 
 use Firecrawl\Laravel\FirecrawlServiceProvider;
+use Illuminate\Support\Facades\Http;
 use Jkudish\LaravelAiLibrarium\LaravelAiLibrariumServiceProvider;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlLibrariumServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Http::preventStrayRequests();
+    }
+
     /** @return list<class-string> */
     protected function getPackageProviders($app): array
     {

@@ -21,6 +21,7 @@ use Jkudish\LaravelAiLibrarium\Responses\ResearchResult;
 use Jkudish\LaravelAiLibrariumFirecrawl\Contracts\CreatesFirecrawlClient;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlDriver;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlResultMapper;
+use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlSearchDriver;
 use Jkudish\LaravelAiLibrariumFirecrawl\Tests\Support\CreatesRequests;
 
 uses(CreatesRequests::class);
@@ -107,7 +108,9 @@ function packageIntegrationProfile(string $mode): array
 it('registers the official SDK and adapter without mutating core profiles by default', function (): void {
     expect(app(FirecrawlClient::class))->toBeInstanceOf(FirecrawlClient::class)
         ->and(app(FirecrawlDriver::class))->toBeInstanceOf(FirecrawlDriver::class)
-        ->and(config('librarium.profiles.firecrawl-surface'))->toBeNull();
+        ->and(app(FirecrawlSearchDriver::class))->toBeInstanceOf(FirecrawlSearchDriver::class)
+        ->and(config('librarium.profiles.firecrawl-surface'))->toBeNull()
+        ->and(config('librarium.profiles.firecrawl-search'))->toBeNull();
 });
 
 it('keeps Firecrawl outside the core package dependency boundary', function (): void {
@@ -124,6 +127,44 @@ it('keeps Firecrawl outside the core package dependency boundary', function (): 
     expect($core['require'])->not->toHaveKey('firecrawl/firecrawl-sdk')
         ->and($adapter['require']['firecrawl/firecrawl-sdk'])->toBe('^1.13')
         ->and($adapter['require']['jkudish/laravel-ai-librarium'])->toBe('^1.0');
+});
+
+it('runs raw Search through core preflight and terminal result acceptance', function (): void {
+    Http::fake(['*' => Http::response([
+        'success' => true,
+        'data' => ['news' => [[
+            'title' => 'Core-compatible result',
+            'url' => 'https://news.example/core',
+            'snippet' => 'Accepted by the shared contract.',
+            'date' => '2026-09-10',
+        ]]],
+        'creditsUsed' => 2,
+    ])]);
+    $profile = config('firecrawl-librarium.search_profile');
+    expect($profile)->toBeArray();
+    assert(is_array($profile));
+    $profile['credential'] = 'fc-test-key';
+    $profile['corpora'] = ['news'];
+    $profile['options'] = ['sources' => ['news'], 'limit' => 3];
+    config()->set('librarium.profiles.firecrawl-search', $profile);
+
+    $result = Librarium::query('What is new?')
+        ->using('firecrawl-search')
+        ->run()
+        ->results
+        ->sole();
+    $serialized = $result->toArray();
+
+    expect($result->provider)->toBe('firecrawl-search')
+        ->and($result->profile)->toBe('firecrawl-search')
+        ->and($result->provenance->resultKind)->toBe(ResultKind::SearchResults)
+        ->and($result->provenance->retrievalMethods->all())->toBe([RetrievalMethod::SearchEndpoint])
+        ->and($result->provenance->collector)->toBeNull()
+        ->and($result->provenance->surface)->toBeNull()
+        ->and($result->providerMeta->credits_used)->toBe(2)
+        ->and(json_encode(ResearchResult::fromArray($serialized)->toArray(), JSON_THROW_ON_ERROR))
+        ->toBe(json_encode($serialized, JSON_THROW_ON_ERROR));
+    Http::assertSentCount(1);
 });
 
 it('runs each provider mode through core preflight and result acceptance', function (string $mode): void {

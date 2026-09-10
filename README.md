@@ -1,6 +1,6 @@
 # Laravel AI Librarium — Firecrawl
 
-Optional first-party Firecrawl surface-collection adapter for
+Optional first-party Firecrawl search and surface-collection adapter for
 `jkudish/laravel-ai-librarium`. Firecrawl and its browser/SDK dependencies stay
 outside the core package.
 
@@ -44,6 +44,42 @@ FIRECRAWL_API_KEY=fc-your-api-key
 Anonymous collection is the only currently accepted execution policy.
 Consumers own credentials, persistence, evidence policy, and any future
 authenticated browser context.
+
+### Raw Search profile
+
+Raw Firecrawl Search is a separate opt-in Profile; it does not overload or
+change the surface-observation Profile above:
+
+```php
+// config/firecrawl-librarium.php
+'register_search_profile' => true,
+'search_profile' => [
+    // Keep the shipped search_results / api_output / search_endpoint fields.
+    'options' => [
+        'sources' => ['web', 'news'], // web by default
+        'limit' => 10,
+        'tbs' => 'qdr:w',
+        'country' => 'CA',
+        'location' => 'Vancouver, British Columbia, Canada',
+        'includeDomains' => ['example.com'], // mutually exclusive with excludeDomains
+        'categories' => ['github', 'research', 'pdf'],
+        'ignoreInvalidURLs' => true,
+    ],
+],
+```
+
+When `sources` changes, configure the Profile `corpora` to the same ordered
+values. Search sends an inline `POST /v2/search`, accepts only absolute HTTPS
+result URLs, normalizes web descriptions and news snippets, preserves
+provider-reported citations, and records a bounded integer `creditsUsed` as
+`provider_meta.credits_used`. It does not invent a currency cost. Search
+provenance has no collector or consumer surface: it is direct API output.
+
+The official PHP SDK remains the surface adapter transport. Its Search DTO
+currently discards the top-level response envelope (including `creditsUsed`),
+so raw Search uses a narrow adapter-owned Laravel HTTP seam. Redirects are
+disabled and raw success/error bodies, credentials, and undocumented fields
+are never retained in results or exceptions.
 
 ## Behavior
 
