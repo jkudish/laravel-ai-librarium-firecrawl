@@ -74,6 +74,9 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
                 ['url' => 'javascript:alert(1)', 'title' => 'Unsafe'],
                 ['url' => 'https://user:pass@private.example/result', 'title' => 'Unsafe'],
                 ['url' => 'https://signed.example/result?X-Goog-Signature=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?apiKey=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?AWSAccessKeyId=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?redirect%5Btoken%5D=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 42, 'title' => 'Malformed'],
             ],
             'news' => [

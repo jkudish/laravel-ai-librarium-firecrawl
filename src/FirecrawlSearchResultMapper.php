@@ -169,12 +169,8 @@ final readonly class FirecrawlSearchResultMapper
             return null;
         }
 
-        parse_str($uri->getQuery(), $query);
-        foreach (array_keys($query) as $key) {
-            $normalized = strtolower(str_replace(['-', '.'], '_', (string) $key));
-            if (preg_match('/(?:^|_)(?:signature|sig|credential|token|secret|api_key|key)(?:_|$)/', $normalized) === 1) {
-                return null;
-            }
+        if ($this->hasCredentialQueryKey($uri->getQuery())) {
+            return null;
         }
 
         if ($uri->getPath() === '') {
@@ -182,6 +178,26 @@ final readonly class FirecrawlSearchResultMapper
         }
 
         return (string) $uri;
+    }
+
+    private function hasCredentialQueryKey(string $query): bool
+    {
+        foreach (preg_split('/[&;]/', $query) ?: [] as $parameter) {
+            [$rawKey] = explode('=', $parameter, 2);
+            $key = rawurldecode(str_replace('+', ' ', $rawKey));
+            $segments = preg_split('/[^a-z0-9]+/i', $key, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            $candidates = [...$segments, implode('', $segments)];
+
+            foreach ($candidates as $candidate) {
+                $normalized = strtolower($candidate);
+                if (in_array($normalized, ['key', 'sig'], true)
+                    || preg_match('/(?:signature|credential|token|secret|api(?:access)?key|accesskeyid)$/', $normalized) === 1) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function dedupeKey(string $url): string
