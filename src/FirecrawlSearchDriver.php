@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Jkudish\LaravelAiLibrariumFirecrawl;
 
 use Carbon\CarbonImmutable;
+use GuzzleHttp\Exception\RequestException as GuzzleRequestException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -17,6 +18,7 @@ use Jkudish\LaravelAiLibrarium\Responses\Enums\Corpus;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\ResultKind;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\RetrievalMethod;
 use Jkudish\LaravelAiLibrarium\Responses\ResearchResult;
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * Direct Firecrawl v2 Search transport.
@@ -65,7 +67,7 @@ final readonly class FirecrawlSearchDriver implements Driver
             throw new DriverException('firecrawl-search.deadline_exceeded', 'Firecrawl Search did not respond before the research deadline.');
         }
 
-        return $this->mapper->result($request, $json, $options['sources']);
+        return $this->mapper->result($request, $json, $options['sources'], $options['limit']);
     }
 
     /**
@@ -111,9 +113,30 @@ final readonly class FirecrawlSearchDriver implements Driver
                 ->asJson()
                 ->connectTimeout(min(self::CONNECT_TIMEOUT_SECONDS, $remaining))
                 ->timeout(min(self::REQUEST_TIMEOUT_SECONDS, $remaining))
-                ->withOptions(['allow_redirects' => false])
+                ->withOptions([
+                    'allow_redirects' => false,
+                    'on_headers' => static function (ResponseInterface $response): void {
+                        $length = $response->getHeaderLine('Content-Length');
+                        if ($length !== '' && ctype_digit($length) && (int) $length > self::MAX_RESPONSE_BYTES) {
+                            throw new DriverException('firecrawl-search.invalid_response', 'Firecrawl Search returned an oversized response.');
+                        }
+                    },
+                ])
                 ->post(rtrim($baseUrl, '/').'/v2/search', $body);
-        } catch (ConnectionException) {
+        } catch (ConnectionException $exception) {
+            $guardFailure = $exception->getPrevious()?->getPrevious();
+            if ($guardFailure instanceof DriverException) {
+                throw $guardFailure;
+            }
+
+            throw CarbonImmutable::now()->greaterThanOrEqualTo($request->deadline)
+                ? new DriverException('firecrawl-search.deadline_exceeded', 'Firecrawl Search did not respond before the research deadline.')
+                : new DriverException('firecrawl-search.connection', 'Firecrawl Search could not be reached.');
+        } catch (GuzzleRequestException $exception) {
+            if ($exception->getPrevious() instanceof DriverException) {
+                throw $exception->getPrevious();
+            }
+
             throw CarbonImmutable::now()->greaterThanOrEqualTo($request->deadline)
                 ? new DriverException('firecrawl-search.deadline_exceeded', 'Firecrawl Search did not respond before the research deadline.')
                 : new DriverException('firecrawl-search.connection', 'Firecrawl Search could not be reached.');
@@ -138,8 +161,11 @@ final readonly class FirecrawlSearchDriver implements Driver
         if ($response->serverError()) {
             throw new DriverException('firecrawl-search.unavailable', 'Firecrawl Search is temporarily unavailable.');
         }
-        if ($response->failed()) {
+        if ($response->clientError()) {
             throw new DriverException('firecrawl-search.invalid_request', 'Firecrawl Search rejected this request.', false);
+        }
+        if ($response->status() !== 200) {
+            throw new DriverException('firecrawl-search.invalid_response', 'Firecrawl Search returned an unexpected response status.');
         }
         if (strlen($response->body()) > self::MAX_RESPONSE_BYTES) {
             throw new DriverException('firecrawl-search.invalid_response', 'Firecrawl Search returned an oversized response.');
@@ -232,6 +258,9 @@ final readonly class FirecrawlSearchDriver implements Driver
         }
         if (blank($request->profile->credential)) {
             throw new DriverException('firecrawl-search.authentication', 'Firecrawl Search is not configured.');
+        }
+        if (preg_match('/^[\x21-\x7e]{1,4096}$/D', (string) $request->profile->credential) !== 1) {
+            throw new DriverException('firecrawl-search.authentication', 'The Firecrawl Search credential is malformed.', false);
         }
 
         return $validated;
@@ -404,14 +433,25 @@ final readonly class FirecrawlSearchDriver implements Driver
 
     private function validBaseUrl(string $url): bool
     {
-        if (filter_var($url, FILTER_VALIDATE_URL) === false || parse_url($url, PHP_URL_SCHEME) !== 'https') {
+        if (trim($url) !== $url || strlen($url) > 2048 || filter_var($url, FILTER_VALIDATE_URL) === false) {
             return false;
         }
 
-        $host = parse_url($url, PHP_URL_HOST);
+        $parts = parse_url($url);
+        if ($parts === false
+            || strtolower($parts['scheme'] ?? '') !== 'https'
+            || isset($parts['user'])
+            || isset($parts['pass'])
+            || isset($parts['query'])
+            || isset($parts['fragment'])
+            || ! in_array($parts['path'] ?? '', ['', '/'], true)) {
+            return false;
+        }
+
+        $host = $parts['host'] ?? null;
 
         return is_string($host)
             && $host !== ''
-            && ($host === 'api.firecrawl.dev' || config('firecrawl-librarium.allow_custom_api_url') === true);
+            && (strtolower($host) === 'api.firecrawl.dev' || config('firecrawl-librarium.allow_custom_api_url') === true);
     }
 }

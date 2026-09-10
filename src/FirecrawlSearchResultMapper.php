@@ -23,18 +23,30 @@ final readonly class FirecrawlSearchResultMapper
 {
     private const int MAX_CREDITS_USED = 2_147_483_647;
 
+    private const int MAX_DATE_CHARS = 100;
+
+    private const int MAX_DECODE_DEPTH = 3;
+
+    private const int MAX_NESTED_URL_DEPTH = 3;
+
+    private const int MAX_SNIPPET_CHARS = 5000;
+
+    private const int MAX_TITLE_CHARS = 500;
+
+    private const int MAX_URL_BYTES = 8192;
+
     /**
      * @param  array<array-key, mixed>  $json
      * @param  list<'web'|'news'>  $sources
      */
-    public function result(DriverRequest $request, array $json, array $sources): ResearchResult
+    public function result(DriverRequest $request, array $json, array $sources, int $limit): ResearchResult
     {
         $data = $json['data'] ?? null;
         if (! is_array($data) || ($data !== [] && array_is_list($data))) {
             throw new DriverException('firecrawl-search.invalid_response', 'Firecrawl Search returned a malformed response.');
         }
 
-        $results = $this->normalize($data, $sources);
+        $results = $this->normalize($data, $sources, $limit);
         /** @var Collection<int, Citation> $citations */
         $citations = collect($results)->map(fn (array $result): Citation => Citation::make(
             derivation: CitationDerivation::ProviderReported,
@@ -74,7 +86,7 @@ final readonly class FirecrawlSearchResultMapper
      * @param  list<'web'|'news'>  $sources
      * @return list<NormalizedResult>
      */
-    private function normalize(array $data, array $sources): array
+    private function normalize(array $data, array $sources, int $limit): array
     {
         $results = [];
         $seen = [];
@@ -95,6 +107,9 @@ final readonly class FirecrawlSearchResultMapper
                 }
                 $seen[$key] = true;
                 $results[] = $result;
+                if (count($results) >= $limit) {
+                    break 2;
+                }
             }
         }
 
@@ -115,9 +130,9 @@ final readonly class FirecrawlSearchResultMapper
         $result = array_filter([
             'kind' => $kind,
             'url' => $url,
-            'title' => $this->text($entry['title'] ?? null),
-            'snippet' => $this->text($entry[$kind === 'web' ? 'description' : 'snippet'] ?? null),
-            'date' => $kind === 'news' ? $this->text($entry['date'] ?? null) : null,
+            'title' => $this->text($entry['title'] ?? null, self::MAX_TITLE_CHARS),
+            'snippet' => $this->text($entry[$kind === 'web' ? 'description' : 'snippet'] ?? null, self::MAX_SNIPPET_CHARS),
+            'date' => $kind === 'news' ? $this->text($entry['date'] ?? null, self::MAX_DATE_CHARS) : null,
         ], static fn (mixed $value): bool => $value !== null);
 
         /** @var NormalizedResult $result */
@@ -155,13 +170,20 @@ final readonly class FirecrawlSearchResultMapper
 
     private function httpsUrl(mixed $value): ?string
     {
-        $url = $this->text($value);
-        if ($url === null) {
+        return $this->httpsUrlAtDepth($value, 0);
+    }
+
+    private function httpsUrlAtDepth(mixed $value, int $depth): ?string
+    {
+        if (! is_string($value)
+            || trim($value) !== $value
+            || $value === ''
+            || strlen($value) > self::MAX_URL_BYTES) {
             return null;
         }
 
         try {
-            $uri = new Uri($url);
+            $uri = new Uri($value);
         } catch (Throwable) {
             return null;
         }
@@ -169,8 +191,10 @@ final readonly class FirecrawlSearchResultMapper
             return null;
         }
 
-        if ($this->hasCredentialQueryKey($uri->getQuery())) {
-            return null;
+        foreach ([$uri->getQuery(), $uri->getFragment()] as $parameters) {
+            if ($this->hasCredentialParameter($parameters, $depth)) {
+                return null;
+            }
         }
 
         if ($uri->getPath() === '') {
@@ -180,24 +204,58 @@ final readonly class FirecrawlSearchResultMapper
         return (string) $uri;
     }
 
-    private function hasCredentialQueryKey(string $query): bool
+    private function hasCredentialParameter(string $parameters, int $depth): bool
     {
-        foreach (preg_split('/[&;]/', $query) ?: [] as $parameter) {
-            [$rawKey] = explode('=', $parameter, 2);
-            $key = rawurldecode(str_replace('+', ' ', $rawKey));
-            $segments = preg_split('/[^a-z0-9]+/i', $key, -1, PREG_SPLIT_NO_EMPTY) ?: [];
-            $candidates = [...$segments, implode('', $segments)];
+        foreach (preg_split('/[&;]/', $parameters) ?: [] as $parameter) {
+            [$rawKey, $rawValue] = array_pad(explode('=', $parameter, 2), 2, '');
+            if ($this->isCredentialKey($rawKey)) {
+                return true;
+            }
 
-            foreach ($candidates as $candidate) {
-                $normalized = strtolower($candidate);
-                if (in_array($normalized, ['key', 'sig'], true)
-                    || preg_match('/(?:signature|credential|token|secret|api(?:access)?key|accesskeyid)$/', $normalized) === 1) {
-                    return true;
-                }
+            if ($depth >= self::MAX_NESTED_URL_DEPTH || $rawValue === '') {
+                continue;
+            }
+
+            $nested = $this->decode($rawValue);
+            if (preg_match('#^https?://#i', $nested) === 1
+                && $this->httpsUrlAtDepth($nested, $depth + 1) === null) {
+                return true;
             }
         }
 
         return false;
+    }
+
+    private function isCredentialKey(string $rawKey): bool
+    {
+        $key = $this->decode($rawKey);
+        $segments = preg_split('/[^a-z0-9]+/i', $key, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        foreach ([...$segments, implode('', $segments)] as $candidate) {
+            $normalized = strtolower($candidate);
+            if (in_array($normalized, ['key', 'sig'], true)
+                || preg_match('/(?:signature|credential|token|secret|api(?:access)?key|accesskeyid)$/D', $normalized) === 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function decode(string $value): string
+    {
+        $decoded = str_replace('+', ' ', $value);
+
+        for ($attempt = 0; $attempt < self::MAX_DECODE_DEPTH; $attempt++) {
+            $next = rawurldecode($decoded);
+            if ($next === $decoded) {
+                break;
+            }
+
+            $decoded = $next;
+        }
+
+        return $decoded;
     }
 
     private function dedupeKey(string $url): string
@@ -246,14 +304,14 @@ final readonly class FirecrawlSearchResultMapper
         return str_replace(['\\', '(', ')', '<', '>'], ['\\\\', '\\(', '\\)', '\\<', '\\>'], $url);
     }
 
-    private function text(mixed $value): ?string
+    private function text(mixed $value, int $maxChars = self::MAX_SNIPPET_CHARS): ?string
     {
         if (! is_string($value)) {
             return null;
         }
         $normalized = preg_replace('/\s+/u', ' ', trim($value));
 
-        return is_string($normalized) && $normalized !== '' ? $normalized : null;
+        return is_string($normalized) && $normalized !== '' ? mb_substr($normalized, 0, $maxChars) : null;
     }
 
     private function credits(mixed $value): ?int

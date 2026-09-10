@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use GuzzleHttp\Exception\RequestException as GuzzleRequestException;
+use GuzzleHttp\Psr7\Request as GuzzleRequest;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\Corpus;
@@ -77,6 +80,9 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
                 ['url' => 'https://signed.example/result?apiKey=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 'https://signed.example/result?AWSAccessKeyId=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 'https://signed.example/result?redirect%5Btoken%5D=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result#access_token=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?redirect=https%3A%2F%2Fprivate.example%2F%3Ftoken%3Dsigned-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?%2561%2570%2569%254b%2565%2579=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 42, 'title' => 'Malformed'],
             ],
             'news' => [
@@ -120,6 +126,31 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
         ->not->toContain('private.example')
         ->not->toContain('signed.example')
         ->not->toContain('signed-secret');
+});
+
+it('caps retained results to the requested limit and bounds rendered provider text', function (): void {
+    Http::fake(['*' => Http::response([
+        'success' => true,
+        'data' => ['web' => [
+            [
+                'url' => 'https://one.example/result',
+                'title' => str_repeat('T', 600),
+                'description' => str_repeat('S', 6000),
+            ],
+            ['url' => 'https://two.example/result', 'title' => 'Second'],
+            ['url' => 'https://three.example/result', 'title' => 'Must not be retained'],
+        ]],
+    ])]);
+
+    $result = app(FirecrawlSearchDriver::class)->run($this->searchRequest(['limit' => 2]));
+
+    expect($result->citations)->toHaveCount(2)
+        ->and($result->providerMeta->result_count)->toBe(2)
+        ->and($result->citations[0]->source->title)->toHaveLength(500)
+        ->and($result->citations[0]->excerpt)->toHaveLength(200)
+        ->and($result->content)->toContain(str_repeat('S', 5000))
+        ->and($result->content)->not->toContain(str_repeat('S', 5001))
+        ->and($result->content)->not->toContain('Must not be retained');
 });
 
 it('escapes provider-controlled Markdown while retaining untrusted citation text', function (): void {
@@ -215,6 +246,32 @@ it('rejects missing credentials and contradictory profile corpora before HTTP', 
     Http::assertNothingSent();
 });
 
+it('rejects malformed credentials before constructing an HTTP request', function (string $credential): void {
+    expect(fn () => app(FirecrawlSearchDriver::class)->run($this->searchRequest(credential: $credential)))
+        ->toThrow(DriverException::class, 'malformed');
+    Http::assertNothingSent();
+})->with([
+    'control character' => ["fc-key\r\ninjected: value"],
+    'space' => ['fc key'],
+    'non-ASCII' => ['fc-key-é'],
+    'oversized' => [str_repeat('k', 4097)],
+]);
+
+it('rejects custom API URLs that are not a clean HTTPS authority', function (string $url): void {
+    config()->set('firecrawl-librarium.api_url', $url);
+    config()->set('firecrawl-librarium.allow_custom_api_url', true);
+
+    expect(fn () => app(FirecrawlSearchDriver::class)->run($this->searchRequest()))
+        ->toThrow(DriverException::class, 'API URL');
+    Http::assertNothingSent();
+})->with([
+    'userinfo' => ['https://user:pass@api.firecrawl.test'],
+    'path' => ['https://api.firecrawl.test/base'],
+    'query' => ['https://api.firecrawl.test?token=secret'],
+    'fragment' => ['https://api.firecrawl.test#fragment'],
+    'HTTP' => ['http://api.firecrawl.test'],
+]);
+
 it('redacts credentials and raw provider bodies from every failure', function (int $status, array|string $body, string $code): void {
     Http::fake(['*' => Http::response($body, $status)]);
 
@@ -245,4 +302,37 @@ it('rejects oversized and malformed successful responses without retaining raw b
     'non-object JSON' => [['not', 'an', 'object'], 'malformed'],
     'missing success' => [['data' => []], 'malformed'],
     'missing data' => [['success' => true], 'malformed'],
+]);
+
+it('preserves the safe response-size failure through Laravel transport wrapping', function (): void {
+    $guardFailure = new DriverException('firecrawl-search.invalid_response', 'Firecrawl Search returned an oversized response.');
+    $guzzleFailure = new GuzzleRequestException(
+        'provider body details',
+        new GuzzleRequest('POST', 'https://api.firecrawl.test/v2/search'),
+        null,
+        $guardFailure,
+    );
+    Http::fake(static fn () => throw new ConnectionException('transport details', 0, $guzzleFailure));
+
+    expect(fn () => app(FirecrawlSearchDriver::class)->run($this->searchRequest()))
+        ->toThrow(function (DriverException $exception): void {
+            expect($exception->errorCode)->toBe('firecrawl-search.invalid_response')
+                ->and($exception->getMessage())->toBe('Firecrawl Search returned an oversized response.')
+                ->and($exception->getMessage())->not->toContain('provider body details')
+                ->not->toContain('fc-test-key');
+        });
+});
+
+it('accepts only the documented HTTP 200 success status', function (int $status): void {
+    Http::fake(['*' => Http::response(['success' => true, 'data' => []], $status)]);
+
+    expect(fn () => app(FirecrawlSearchDriver::class)->run($this->searchRequest()))
+        ->toThrow(function (DriverException $exception): void {
+            expect($exception->errorCode)->toBe('firecrawl-search.invalid_response')
+                ->and($exception->getMessage())->not->toContain('fc-test-key');
+        });
+})->with([
+    'created' => [201],
+    'no content' => [204],
+    'redirect' => [302],
 ]);
