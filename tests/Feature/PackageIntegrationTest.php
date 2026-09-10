@@ -23,6 +23,7 @@ use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlDriver;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlResultMapper;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlSearchDriver;
 use Jkudish\LaravelAiLibrariumFirecrawl\Tests\Support\CreatesRequests;
+use Jkudish\LaravelAiPricing\Enums\CostCompleteness;
 
 uses(CreatesRequests::class);
 
@@ -165,6 +166,25 @@ it('runs raw Search through core preflight and terminal result acceptance', func
         ->and(json_encode(ResearchResult::fromArray($serialized)->toArray(), JSON_THROW_ON_ERROR))
         ->toBe(json_encode($serialized, JSON_THROW_ON_ERROR));
     Http::assertSentCount(1);
+});
+
+it('keeps raw Search preview pricing unavailable without a truthful preflight credit quantity', function (): void {
+    $profile = config('firecrawl-librarium.search_profile');
+    expect($profile)->toBeArray()->not->toHaveKey('pricing');
+    assert(is_array($profile));
+    $profile['credential'] = 'fc-test-key';
+    config()->set('librarium.profiles.firecrawl-search', $profile);
+
+    $preview = Librarium::query('What is new?')->using('firecrawl-search')->preview();
+    $pricing = $preview->pricingQuotes->sole();
+
+    expect($pricing['identity'])->toBeNull()
+        ->and($pricing['usage'])->toBeNull()
+        ->and($pricing['quote']->completeness)->toBe(CostCompleteness::Unavailable)
+        ->and($preview->pricingStatus)->toBe('unavailable')
+        ->and($preview->hardCostCeilingAvailable)->toBeFalse()
+        ->and($preview->maximumEstimatedCost)->toBeNull();
+    Http::assertNothingSent();
 });
 
 it('runs each provider mode through core preflight and result acceptance', function (string $mode): void {

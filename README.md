@@ -81,6 +81,14 @@ so raw Search uses a narrow adapter-owned Laravel HTTP seam. Redirects are
 disabled and raw success/error bodies, credentials, and undocumented fields
 are never retained in results or exceptions.
 
+The shipped Search Profile intentionally has no pricing declaration. Firecrawl
+reports `creditsUsed` only after Search completes, and the result `limit` is not
+a truthful conservative preflight credit quantity. Librarium preview pricing
+therefore remains unavailable rather than treating unknown cost as zero. An
+application may add a configured-only pricing identity and explicit usage when
+it owns a truthful bound for its Firecrawl plan; provider-reported credits in
+completed results remain actual metering, not a preview quote.
+
 ## Behavior
 
 - `interact` mode uses the official SDK for the initial scrape and browser
@@ -171,14 +179,26 @@ composer format
 composer validate --strict
 ```
 
-Ordinary tests make no network calls. `composer test:live` is an explicit,
-release-gated paid canary and is not authorized by normal package verification.
-It requires `LIBRARIUM_LIVE_TESTS=1`, `FIRECRAWL_API_KEY`, a target URL, and the
+Ordinary tests make no network calls. The live canaries are separate,
+release-gated, paid commands and are not authorized by normal package
+verification.
+
+`composer test:live` preserves the surface Agent canary. It requires
+`LIBRARIUM_LIVE_TESTS=1`, `FIRECRAWL_API_KEY`, a target URL, and the
 `FIRECRAWL_LIVE_SPEND_ACK` variable set to the exact value
 `acknowledge-2500-credit-maximum`. The expected maximum is Firecrawl Agent's
 documented default request ceiling of 2,500 credits; actual credit-to-currency
 cost depends on the consumer's Firecrawl plan. This command must not be run
 without fresh authorization for that provider spend.
+
+`composer test:live-search` is the distinct raw Search canary. It requires
+`LIBRARIUM_LIVE_TESTS=1`, `FIRECRAWL_API_KEY`, and
+`FIRECRAWL_SEARCH_LIVE_CREDIT_ACK=acknowledge-one-search-request-up-to-3-results`.
+It sends exactly one `POST /v2/search` with the fixed query
+`Firecrawl Search API documentation`, `sources: [web]`, and `limit: 3`, then
+asserts that only that request occurred. This canary exists but was not run for
+this implementation; run it only with separate explicit provider-spend
+authorization.
 
 Pull requests can produce repository-owned Amp-orb evidence with:
 
