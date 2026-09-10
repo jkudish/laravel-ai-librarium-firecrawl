@@ -19,6 +19,7 @@ use Jkudish\LaravelAiLibrarium\Responses\Enums\ResultKind;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\RetrievalMethod;
 use Jkudish\LaravelAiLibrarium\Responses\ResearchResult;
 use Psr\Http\Message\ResponseInterface;
+use Throwable;
 
 /**
  * Direct Firecrawl v2 Search transport.
@@ -67,7 +68,13 @@ final readonly class FirecrawlSearchDriver implements Driver
             throw new DriverException('firecrawl-search.deadline_exceeded', 'Firecrawl Search did not respond before the research deadline.');
         }
 
-        return $this->mapper->result($request, $json, $options['sources'], $options['limit']);
+        try {
+            return $this->mapper->result($request, $json, $options['sources'], $options['limit']);
+        } catch (DriverException $exception) {
+            throw $exception;
+        } catch (Throwable) {
+            throw new DriverException('firecrawl-search.invalid_response', 'Firecrawl Search returned a malformed response.');
+        }
     }
 
     /**

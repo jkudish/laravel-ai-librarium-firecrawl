@@ -85,6 +85,14 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
                 ['url' => 'https://signed.example/result?%2561%2570%2569%254b%2565%2579=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 'https://signed.example/result?api%2525254Bey=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 'https://signed.example/?url=https%3A%2F%2Fa.example%2F%3Furl%3Dhttps%253A%252F%252Fb.example%252F%253Furl%253Dhttps%25253A%25252F%25252Fc.example%25252F%25253Furl%25253Dhttps%2525253A%2525252F%2525252Fd.example%2525252F%2525253Ftoken%2525253Dsigned-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/redirect/https%3A%2F%2Fprivate.example%2F%3Ftoken%3Dsigned-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?redirect=+https%3A%2F%2Fprivate.example%2F%3Ftoken%3Dsigned-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?redirect=%2F%2Fprivate.example%2F%3FapiKey%3Dsigned-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?redirect=%2Fpath%3Ftoken%3Dsigned-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?redirect=token%3Dsigned-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?password=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?authorization=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?session_id=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 42, 'title' => 'Malformed'],
             ],
             'news' => [
@@ -130,7 +138,7 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
         ->not->toContain('signed-secret');
 });
 
-it('caps retained results to the requested limit and bounds rendered provider text', function (): void {
+it('caps retained results to the requested per-source limit and bounds rendered provider text', function (): void {
     Http::fake(['*' => Http::response([
         'success' => true,
         'data' => ['web' => [
@@ -153,6 +161,38 @@ it('caps retained results to the requested limit and bounds rendered provider te
         ->and($result->content)->toContain(str_repeat('S', 5000))
         ->and($result->content)->not->toContain(str_repeat('S', 5001))
         ->and($result->content)->not->toContain('Must not be retained');
+});
+
+it('applies the documented result limit independently to every configured source', function (): void {
+    Http::fake(['*' => Http::response([
+        'success' => true,
+        'data' => [
+            'web' => [
+                ['url' => 'https://web.example/one', 'title' => 'Web one'],
+                ['url' => 'https://web.example/two', 'title' => 'Web two'],
+                ['url' => 'https://web.example/three', 'title' => 'Web three'],
+            ],
+            'news' => [
+                ['url' => 'https://news.example/one', 'title' => 'News one'],
+                ['url' => 'https://news.example/two', 'title' => 'News two'],
+                ['url' => 'https://news.example/three', 'title' => 'News three'],
+            ],
+        ],
+    ])]);
+
+    $result = app(FirecrawlSearchDriver::class)->run($this->searchRequest(
+        ['sources' => ['web', 'news'], 'limit' => 2],
+        [Corpus::Web, Corpus::News],
+    ));
+
+    expect($result->citations->pluck('source.url')->all())->toBe([
+        'https://web.example/one',
+        'https://web.example/two',
+        'https://news.example/one',
+        'https://news.example/two',
+    ])->and($result->providerMeta->result_count)->toBe(4)
+        ->and($result->content)->not->toContain('Web three')
+        ->and($result->content)->not->toContain('News three');
 });
 
 it('escapes provider-controlled Markdown while retaining untrusted citation text', function (): void {

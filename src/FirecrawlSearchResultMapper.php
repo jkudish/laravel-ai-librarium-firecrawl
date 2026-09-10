@@ -27,8 +27,6 @@ final readonly class FirecrawlSearchResultMapper
 
     private const int MAX_DECODE_DEPTH = 3;
 
-    private const int MAX_NESTED_URL_DEPTH = 3;
-
     private const int MAX_SNIPPET_CHARS = 5000;
 
     private const int MAX_TITLE_CHARS = 500;
@@ -96,6 +94,7 @@ final readonly class FirecrawlSearchResultMapper
             if (! is_array($entries) || ! array_is_list($entries)) {
                 continue;
             }
+            $retained = 0;
             foreach ($entries as $entry) {
                 $result = $this->normalizeResult($source, $entry);
                 if ($result === null) {
@@ -107,8 +106,9 @@ final readonly class FirecrawlSearchResultMapper
                 }
                 $seen[$key] = true;
                 $results[] = $result;
-                if (count($results) >= $limit) {
-                    break 2;
+                $retained++;
+                if ($retained >= $limit) {
+                    break;
                 }
             }
         }
@@ -170,11 +170,6 @@ final readonly class FirecrawlSearchResultMapper
 
     private function httpsUrl(mixed $value): ?string
     {
-        return $this->httpsUrlAtDepth($value, 0);
-    }
-
-    private function httpsUrlAtDepth(mixed $value, int $depth): ?string
-    {
         if (! is_string($value)
             || trim($value) !== $value
             || $value === ''
@@ -191,8 +186,13 @@ final readonly class FirecrawlSearchResultMapper
             return null;
         }
 
-        foreach ([$uri->getQuery(), $uri->getFragment()] as $parameters) {
-            if ($this->hasCredentialParameter($parameters, $depth)) {
+        foreach (['path', 'query', 'fragment'] as $component) {
+            $value = match ($component) {
+                'path' => $uri->getPath(),
+                'query' => $uri->getQuery(),
+                'fragment' => $uri->getFragment(),
+            };
+            if ($this->hasCredentialMaterial($value, allowBareKey: $component !== 'path')) {
                 return null;
             }
         }
@@ -204,25 +204,25 @@ final readonly class FirecrawlSearchResultMapper
         return (string) $uri;
     }
 
-    private function hasCredentialParameter(string $parameters, int $depth): bool
+    private function hasCredentialMaterial(string $component, bool $allowBareKey): bool
     {
-        foreach (preg_split('/[&;]/', $parameters) ?: [] as $parameter) {
-            [$rawKey, $rawValue] = array_pad(explode('=', $parameter, 2), 2, '');
-            if ($this->isCredentialKey($rawKey)) {
-                return true;
-            }
+        $decoded = $this->decode($component);
+        if ($decoded === null) {
+            return true;
+        }
 
-            if ($rawValue === '') {
-                continue;
+        if ($allowBareKey) {
+            foreach (preg_split('/[&;]/', $decoded) ?: [] as $parameter) {
+                [$key] = explode('=', $parameter, 2);
+                if ($this->isCredentialKey($key)) {
+                    return true;
+                }
             }
+        }
 
-            $nested = $this->decode($rawValue);
-            if ($nested === null) {
-                return true;
-            }
-            if (preg_match('#^https?://#i', $nested) === 1
-                && ($depth >= self::MAX_NESTED_URL_DEPTH
-                    || $this->httpsUrlAtDepth($nested, $depth + 1) === null)) {
+        preg_match_all('/(?:^|[?&;\/=])\K([^?&;\/=]+)(?==)/', $decoded, $matches);
+        foreach ($matches[1] as $key) {
+            if ($this->isCredentialKey($key)) {
                 return true;
             }
         }
@@ -241,7 +241,7 @@ final readonly class FirecrawlSearchResultMapper
         foreach ([...$segments, implode('', $segments)] as $candidate) {
             $normalized = strtolower($candidate);
             if (in_array($normalized, ['key', 'sig'], true)
-                || preg_match('/(?:signature|credential|token|secret|api(?:access)?key|accesskeyid)$/D', $normalized) === 1) {
+                || preg_match('/(?:signature|credential|token|secret|password|passwd|authorization|authentication|auth|session(?:id)?|api(?:access)?key|accesskeyid)$/D', $normalized) === 1) {
                 return true;
             }
         }
