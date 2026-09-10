@@ -83,6 +83,8 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
                 ['url' => 'https://signed.example/result#access_token=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 'https://signed.example/result?redirect=https%3A%2F%2Fprivate.example%2F%3Ftoken%3Dsigned-secret', 'title' => 'Unsafe'],
                 ['url' => 'https://signed.example/result?%2561%2570%2569%254b%2565%2579=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?api%2525254Bey=signed-secret', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/?url=https%3A%2F%2Fa.example%2F%3Furl%3Dhttps%253A%252F%252Fb.example%252F%253Furl%253Dhttps%25253A%25252F%25252Fc.example%25252F%25253Furl%25253Dhttps%2525253A%2525252F%2525252Fd.example%2525252F%2525253Ftoken%2525253Dsigned-secret', 'title' => 'Unsafe'],
                 ['url' => 42, 'title' => 'Malformed'],
             ],
             'news' => [

@@ -212,13 +212,17 @@ final readonly class FirecrawlSearchResultMapper
                 return true;
             }
 
-            if ($depth >= self::MAX_NESTED_URL_DEPTH || $rawValue === '') {
+            if ($rawValue === '') {
                 continue;
             }
 
             $nested = $this->decode($rawValue);
+            if ($nested === null) {
+                return true;
+            }
             if (preg_match('#^https?://#i', $nested) === 1
-                && $this->httpsUrlAtDepth($nested, $depth + 1) === null) {
+                && ($depth >= self::MAX_NESTED_URL_DEPTH
+                    || $this->httpsUrlAtDepth($nested, $depth + 1) === null)) {
                 return true;
             }
         }
@@ -229,6 +233,9 @@ final readonly class FirecrawlSearchResultMapper
     private function isCredentialKey(string $rawKey): bool
     {
         $key = $this->decode($rawKey);
+        if ($key === null) {
+            return true;
+        }
         $segments = preg_split('/[^a-z0-9]+/i', $key, -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
         foreach ([...$segments, implode('', $segments)] as $candidate) {
@@ -242,7 +249,7 @@ final readonly class FirecrawlSearchResultMapper
         return false;
     }
 
-    private function decode(string $value): string
+    private function decode(string $value): ?string
     {
         $decoded = str_replace('+', ' ', $value);
 
@@ -255,7 +262,7 @@ final readonly class FirecrawlSearchResultMapper
             $decoded = $next;
         }
 
-        return $decoded;
+        return preg_match('/%[0-9a-f]{2}/i', $decoded) === 1 ? null : $decoded;
     }
 
     private function dedupeKey(string $url): string
