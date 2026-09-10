@@ -165,8 +165,16 @@ final readonly class FirecrawlSearchResultMapper
         } catch (Throwable) {
             return null;
         }
-        if (strtolower($uri->getScheme()) !== 'https' || $uri->getHost() === '') {
+        if (strtolower($uri->getScheme()) !== 'https' || $uri->getHost() === '' || $uri->getUserInfo() !== '') {
             return null;
+        }
+
+        parse_str($uri->getQuery(), $query);
+        foreach (array_keys($query) as $key) {
+            $normalized = strtolower(str_replace(['-', '.'], '_', (string) $key));
+            if (preg_match('/(?:^|_)(?:signature|sig|credential|token|secret|api_key|key)(?:_|$)/', $normalized) === 1) {
+                return null;
+            }
         }
 
         if ($uri->getPath() === '') {

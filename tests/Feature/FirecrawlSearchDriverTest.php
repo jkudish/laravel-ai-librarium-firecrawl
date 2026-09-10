@@ -72,6 +72,8 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
                 ['url' => 'https://web.example/only', 'description' => "  Web-only\n detail. "],
                 ['url' => 'http://insecure.example/result', 'title' => 'Unsafe'],
                 ['url' => 'javascript:alert(1)', 'title' => 'Unsafe'],
+                ['url' => 'https://user:pass@private.example/result', 'title' => 'Unsafe'],
+                ['url' => 'https://signed.example/result?X-Goog-Signature=signed-secret', 'title' => 'Unsafe'],
                 ['url' => 42, 'title' => 'Malformed'],
             ],
             'news' => [
@@ -110,6 +112,11 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
         ->and($result->citations[2]->source->kind->value)->toBe('web_page')
         ->and($result->providerMeta->result_count)->toBe(3)
         ->and($result->providerMeta->credits_used)->toBe(4);
+
+    expect(json_encode($result->toArray(), JSON_THROW_ON_ERROR))
+        ->not->toContain('private.example')
+        ->not->toContain('signed.example')
+        ->not->toContain('signed-secret');
 });
 
 it('escapes provider-controlled Markdown while retaining untrusted citation text', function (): void {
