@@ -206,12 +206,12 @@ final readonly class FirecrawlSearchResultMapper
 
     private function hasCredentialMaterial(string $component, bool $allowBareKey): bool
     {
-        $decoded = $this->decode($component);
-        if ($decoded === null) {
+        if ($this->hasNestedUserInfo($component)) {
             return true;
         }
 
-        if (preg_match('~(?:https?:)?//[^/?#\s]*@~i', $decoded) === 1) {
+        $decoded = $this->decode($component);
+        if ($decoded === null) {
             return true;
         }
 
@@ -229,6 +229,26 @@ final readonly class FirecrawlSearchResultMapper
             if ($this->isCredentialKey($key)) {
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    private function hasNestedUserInfo(string $value): bool
+    {
+        $decoded = str_replace('+', ' ', $value);
+
+        for ($attempt = 0; $attempt <= self::MAX_DECODE_DEPTH; $attempt++) {
+            if (preg_match('~(?:https?:)?//[^/?#\s]*@~i', $decoded) === 1) {
+                return true;
+            }
+
+            $next = rawurldecode($decoded);
+            if ($next === $decoded) {
+                return false;
+            }
+
+            $decoded = $next;
         }
 
         return false;

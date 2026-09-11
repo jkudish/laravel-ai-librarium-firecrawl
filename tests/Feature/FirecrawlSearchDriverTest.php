@@ -157,6 +157,18 @@ it('rejects decoded nested userinfo and credential wrapper keys without dropping
         'https://search.example/result?redirect=https%253A%252F%252Fuser%253Apass%2540private.example%252Fresult',
         'https://search.example/result?redirect=https%253A%252F%252Fpublic.example%252Fresult%253Fpage%253D2',
     ],
+    'nested userinfo with an encoded slash' => [
+        'https://search.example/result?redirect=https%3A%2F%2Fuser%3Apa%252Fss%40private.example%2Fresult',
+        'https://search.example/result?redirect=https%3A%2F%2Fpublic.example%2Freports%252F2026',
+    ],
+    'nested userinfo with an encoded query delimiter' => [
+        'https://search.example/result?redirect=https%3A%2F%2Fuser%3Apa%253Fss%40private.example%2Fresult',
+        'https://search.example/result?redirect=https%3A%2F%2Fpublic.example%2Fresult%3Fpage%3D2',
+    ],
+    'nested userinfo with an encoded fragment delimiter' => [
+        'https://search.example/result?redirect=https%3A%2F%2Fuser%3Apa%2523ss%40private.example%2Fresult',
+        'https://search.example/result?redirect=https%3A%2F%2Fpublic.example%2Fresult%23section',
+    ],
     'accessKey' => [
         'https://search.example/result?accessKey=secret',
         'https://search.example/result?accessLevel=public',
