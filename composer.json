@@ -43,7 +43,13 @@
             "@php -r \"if (getenv('FIRECRAWL_LIVE_SPEND_ACK') !== 'acknowledge-2500-credit-maximum') { fwrite(STDERR, 'The exact Firecrawl spend acknowledgement is required.\\n'); exit(1); }\"",
             "@php -r \"if (trim((string) getenv('FIRECRAWL_API_KEY')) === '') { fwrite(STDERR, 'FIRECRAWL_API_KEY is required.\\n'); exit(1); }\"",
             "@php -r \"if (filter_var(getenv('FIRECRAWL_LIVE_TARGET_URL'), FILTER_VALIDATE_URL) === false) { fwrite(STDERR, 'FIRECRAWL_LIVE_TARGET_URL is required.\\n'); exit(1); }\"",
-            "vendor/bin/pest tests/Live --fail-on-skipped"
+            "vendor/bin/pest tests/Live/FirecrawlLiveTest.php --fail-on-skipped"
+        ],
+        "test:live-search": [
+            "@php -r \"if (getenv('LIBRARIUM_LIVE_TESTS') !== '1') { fwrite(STDERR, 'LIBRARIUM_LIVE_TESTS=1 is required.\\n'); exit(1); }\"",
+            "@php -r \"if (getenv('FIRECRAWL_SEARCH_LIVE_CREDIT_ACK') !== 'acknowledge-one-search-request-up-to-3-results') { fwrite(STDERR, 'The exact Firecrawl Search credit acknowledgement is required.\\n'); exit(1); }\"",
+            "@php -r \"if (trim((string) getenv('FIRECRAWL_API_KEY')) === '') { fwrite(STDERR, 'FIRECRAWL_API_KEY is required.\\n'); exit(1); }\"",
+            "vendor/bin/pest tests/Live/FirecrawlSearchLiveTest.php --fail-on-skipped"
         ]
     },
     "config": {

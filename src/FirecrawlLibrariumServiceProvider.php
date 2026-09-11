@@ -16,12 +16,15 @@ final class FirecrawlLibrariumServiceProvider extends ServiceProvider
         $this->app->singleton(PromptInteractClient::class);
         $this->app->singleton(CreatesFirecrawlClient::class, FirecrawlClientFactory::class);
         $this->app->singleton(FirecrawlResultMapper::class);
+        $this->app->singleton(FirecrawlSearchResultMapper::class);
         $this->app->singleton(FirecrawlDriver::class);
+        $this->app->singleton(FirecrawlSearchDriver::class);
     }
 
     public function boot(): void
     {
         $this->registerConfiguredProfile();
+        $this->registerConfiguredSearchProfile();
         $this->loadRoutesFrom(__DIR__.'/../routes/webhooks.php');
 
         if ($this->app->runningInConsole()) {
@@ -39,6 +42,30 @@ final class FirecrawlLibrariumServiceProvider extends ServiceProvider
 
         $id = config('firecrawl-librarium.profile_id');
         $profile = config('firecrawl-librarium.profile');
+        if (! is_string($id) || $id === '' || ! is_array($profile)) {
+            return;
+        }
+
+        $profiles = config('librarium.profiles', []);
+        if (! is_array($profiles) || array_key_exists($id, $profiles)) {
+            return;
+        }
+
+        if (blank($profile['credential'] ?? null)) {
+            $profile['credential'] = config('firecrawl.api_key');
+        }
+
+        config()->set('librarium.profiles.'.$id, $profile);
+    }
+
+    private function registerConfiguredSearchProfile(): void
+    {
+        if (config('firecrawl-librarium.register_search_profile') !== true) {
+            return;
+        }
+
+        $id = config('firecrawl-librarium.search_profile_id');
+        $profile = config('firecrawl-librarium.search_profile');
         if (! is_string($id) || $id === '' || ! is_array($profile)) {
             return;
         }

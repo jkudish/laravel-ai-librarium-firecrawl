@@ -1,6 +1,6 @@
 # Laravel AI Librarium — Firecrawl
 
-Optional first-party Firecrawl surface-collection adapter for
+Optional first-party Firecrawl search and surface-collection adapter for
 `jkudish/laravel-ai-librarium`. Firecrawl and its browser/SDK dependencies stay
 outside the core package.
 
@@ -44,6 +44,50 @@ FIRECRAWL_API_KEY=fc-your-api-key
 Anonymous collection is the only currently accepted execution policy.
 Consumers own credentials, persistence, evidence policy, and any future
 authenticated browser context.
+
+### Raw Search profile
+
+Raw Firecrawl Search is a separate opt-in Profile; it does not overload or
+change the surface-observation Profile above:
+
+```php
+// config/firecrawl-librarium.php
+'register_search_profile' => true,
+'search_profile' => [
+    // Keep the shipped search_results / api_output / search_endpoint fields.
+    'options' => [
+        'sources' => ['web', 'news'], // web by default
+        'limit' => 10,
+        'tbs' => 'qdr:w',
+        'country' => 'CA',
+        'location' => 'Vancouver, British Columbia, Canada',
+        'includeDomains' => ['example.com'], // mutually exclusive with excludeDomains
+        'categories' => ['github', 'research', 'pdf'],
+        'ignoreInvalidURLs' => true,
+    ],
+],
+```
+
+When `sources` changes, configure the Profile `corpora` to the same ordered
+values. Search sends an inline `POST /v2/search`, accepts only absolute HTTPS
+result URLs, normalizes web descriptions and news snippets, preserves
+provider-reported citations, and records a bounded integer `creditsUsed` as
+`provider_meta.credits_used`. It does not invent a currency cost. Search
+provenance has no collector or consumer surface: it is direct API output.
+
+The official PHP SDK remains the surface adapter transport. Its Search DTO
+currently discards the top-level response envelope (including `creditsUsed`),
+so raw Search uses a narrow adapter-owned Laravel HTTP seam. Redirects are
+disabled and raw success/error bodies, credentials, and undocumented fields
+are never retained in results or exceptions.
+
+The shipped Search Profile intentionally has no pricing declaration. Firecrawl
+reports `creditsUsed` only after Search completes, and the result `limit` is not
+a truthful conservative preflight credit quantity. Librarium preview pricing
+therefore remains unavailable rather than treating unknown cost as zero. An
+application may add a configured-only pricing identity and explicit usage when
+it owns a truthful bound for its Firecrawl plan; provider-reported credits in
+completed results remain actual metering, not a preview quote.
 
 ## Behavior
 
@@ -135,14 +179,26 @@ composer format
 composer validate --strict
 ```
 
-Ordinary tests make no network calls. `composer test:live` is an explicit,
-release-gated paid canary and is not authorized by normal package verification.
-It requires `LIBRARIUM_LIVE_TESTS=1`, `FIRECRAWL_API_KEY`, a target URL, and the
+Ordinary tests make no network calls. The live canaries are separate,
+release-gated, paid commands and are not authorized by normal package
+verification.
+
+`composer test:live` preserves the surface Agent canary. It requires
+`LIBRARIUM_LIVE_TESTS=1`, `FIRECRAWL_API_KEY`, a target URL, and the
 `FIRECRAWL_LIVE_SPEND_ACK` variable set to the exact value
 `acknowledge-2500-credit-maximum`. The expected maximum is Firecrawl Agent's
 documented default request ceiling of 2,500 credits; actual credit-to-currency
 cost depends on the consumer's Firecrawl plan. This command must not be run
 without fresh authorization for that provider spend.
+
+`composer test:live-search` is the distinct raw Search canary. It requires
+`LIBRARIUM_LIVE_TESTS=1`, `FIRECRAWL_API_KEY`, and
+`FIRECRAWL_SEARCH_LIVE_CREDIT_ACK=acknowledge-one-search-request-up-to-3-results`.
+It sends exactly one `POST /v2/search` with the fixed query
+`Firecrawl Search API documentation`, `sources: [web]`, and `limit: 3`, then
+asserts that only that request occurred. This canary exists but was not run for
+this implementation; run it only with separate explicit provider-spend
+authorization.
 
 Pull requests can produce repository-owned Amp-orb evidence with:
 
@@ -169,11 +225,12 @@ composer pr:signoff -- --approved-sha <full-sha>
 The guarded command also requires an open GitHub pull request at that remote
 head in `jkudish/laravel-ai-librarium-firecrawl` and the
 `basecamp/gh-signoff` extension. It maps `GH_SIGNOFF_TOKEN` to `GH_TOKEN` only
-for the final exact `gh signoff --commit <sha>` call, pins `GH_REPO` to this
-repository, and never uses force. The fine-grained token should be limited to
-this repository with **Contents: read**, **Pull requests: read**, and **Commit
-statuses: read/write**. Read-only PR inspection uses the existing GitHub CLI
-login instead of the signoff token.
+for the pinned extension lookup, read-only PR checks, and final exact
+`gh signoff --commit <sha>` call, pins `GH_HOST` to `github.com` and `GH_REPO`
+to this repository, and never uses force. The fine-grained token should be
+limited to this repository with **Contents: read**, **Pull requests: read**, and
+**Commit statuses: read/write**. Offline candidate checks receive neither the
+dedicated token nor ambient GitHub credentials.
 
 This status attestation is not cryptographic commit signing, self-approval,
 merge approval, ruleset setup, release, publication, deployment, production

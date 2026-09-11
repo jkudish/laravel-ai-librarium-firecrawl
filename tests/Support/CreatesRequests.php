@@ -14,6 +14,7 @@ use Jkudish\LaravelAiLibrarium\Responses\Enums\Corpus;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\ResultKind;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\RetrievalMethod;
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlDriver;
+use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlSearchDriver;
 
 trait CreatesRequests
 {
@@ -62,6 +63,42 @@ trait CreatesRequests
             prompt: 'What is new?',
             deadline: CarbonImmutable::now()->addSeconds($deadlineSeconds),
             progressCallback: $progress ?? static function (): void {},
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     * @param  list<Corpus>  $corpora
+     */
+    private function searchRequest(
+        array $options = [],
+        array $corpora = [Corpus::Web],
+        ?string $credential = 'fc-test-key',
+        int $deadlineSeconds = 300,
+    ): DriverRequest {
+        $profile = new Profile(
+            id: 'firecrawl-search',
+            driver: FirecrawlSearchDriver::class,
+            provider: 'firecrawl-search',
+            model: null,
+            resultKind: ResultKind::SearchResults,
+            grounding: GroundingPolicy::None,
+            observation: ObservationMode::ApiOutput,
+            corpora: collect($corpora),
+            retrievalMethods: collect([RetrievalMethod::SearchEndpoint]),
+            prompt: '{{ query }}',
+            enabled: true,
+            options: $options,
+            credential: $credential,
+        );
+
+        return new DriverRequest(
+            requestId: 'search-request-1',
+            requestedProfile: $profile,
+            profile: $profile,
+            prompt: 'What is new?',
+            deadline: CarbonImmutable::now()->addSeconds($deadlineSeconds),
+            progressCallback: static function (): void {},
         );
     }
 }

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlDriver;
+use Jkudish\LaravelAiLibrariumFirecrawl\FirecrawlSearchDriver;
 
 return [
     'api_url' => config('firecrawl.api_url', 'https://api.firecrawl.dev'),
@@ -35,6 +36,22 @@ return [
             'surface' => null,
             'authentication' => 'anonymous',
         ],
+        'credential' => config('firecrawl.api_key'),
+    ],
+    'register_search_profile' => false,
+    'search_profile_id' => 'firecrawl-search',
+    'search_profile' => [
+        'driver' => FirecrawlSearchDriver::class,
+        'provider' => 'firecrawl-search',
+        'model' => null,
+        'result_kind' => 'search_results',
+        'grounding' => 'none',
+        'observation' => 'api_output',
+        'corpora' => ['web'],
+        'retrieval_methods' => ['search_endpoint'],
+        'prompt' => '{{ query }}',
+        'enabled' => true,
+        'options' => [],
         'credential' => config('firecrawl.api_key'),
     ],
 ];
