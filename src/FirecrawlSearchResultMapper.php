@@ -211,6 +211,10 @@ final readonly class FirecrawlSearchResultMapper
             return true;
         }
 
+        if (preg_match('~(?:https?:)?//[^/?#\s]*@~i', $decoded) === 1) {
+            return true;
+        }
+
         if ($allowBareKey) {
             foreach (preg_split('/[&;]/', $decoded) ?: [] as $parameter) {
                 [$key] = explode('=', $parameter, 2);
@@ -241,7 +245,7 @@ final readonly class FirecrawlSearchResultMapper
         foreach ([...$segments, implode('', $segments)] as $candidate) {
             $normalized = strtolower($candidate);
             if (in_array($normalized, ['key', 'sig'], true)
-                || preg_match('/(?:signature|credential|token|secret|password|passwd|authorization|authentication|auth|session(?:id)?|api(?:access)?key|accesskeyid)$/D', $normalized) === 1) {
+                || preg_match('/(?:signature|credential|token|secret|password|passwd|authorization|authentication|auth|session(?:id)?|api(?:access)?key|accesskey(?:id)?)(?:value)?$/D', $normalized) === 1) {
                 return true;
             }
         }
@@ -287,12 +291,12 @@ final readonly class FirecrawlSearchResultMapper
         }
 
         $port = $uri->getPort();
-        $normalized = $host.($port === null ? '' : ':'.$port).$uri->getPath();
+        $normalized = $host.($port === null ? '' : ':'.$port).rtrim($uri->getPath(), '/');
         if ($retained !== []) {
             $normalized .= '?'.implode('&', $retained);
         }
 
-        return rtrim($normalized, '/');
+        return $normalized;
     }
 
     private function markdownText(string $value): string

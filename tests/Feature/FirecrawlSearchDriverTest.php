@@ -138,6 +138,59 @@ it('normalizes asymmetric web and news fixtures in configured source order', fun
         ->not->toContain('signed-secret');
 });
 
+it('rejects decoded nested userinfo and credential wrapper keys without dropping benign controls', function (string $unsafe, string $benign): void {
+    Http::fake(['*' => Http::response([
+        'success' => true,
+        'data' => ['web' => [
+            ['url' => $unsafe, 'title' => 'Unsafe'],
+            ['url' => $benign, 'title' => 'Benign'],
+        ]],
+    ])]);
+
+    $result = app(FirecrawlSearchDriver::class)->run($this->searchRequest());
+
+    expect($result->citations->pluck('source.url')->all())->toBe([$benign])
+        ->and($result->content)->toContain('Benign')
+        ->not->toContain('Unsafe');
+})->with([
+    'nested percent-decoded URL userinfo' => [
+        'https://search.example/result?redirect=https%253A%252F%252Fuser%253Apass%2540private.example%252Fresult',
+        'https://search.example/result?redirect=https%253A%252F%252Fpublic.example%252Fresult%253Fpage%253D2',
+    ],
+    'accessKey' => [
+        'https://search.example/result?accessKey=secret',
+        'https://search.example/result?accessLevel=public',
+    ],
+    'tokenValue' => [
+        'https://search.example/result?tokenValue=secret',
+        'https://search.example/result?tokenizerValue=words',
+    ],
+    'vendorSessionTokenValue' => [
+        'https://search.example/result?vendorSessionTokenValue=secret',
+        'https://search.example/result?vendorSessionTimeoutValue=30',
+    ],
+]);
+
+it('canonicalizes path slashes without collapsing distinct nontracking query values ending in slashes', function (): void {
+    Http::fake(['*' => Http::response([
+        'success' => true,
+        'data' => ['web' => [
+            ['url' => 'https://example.com/item/?variant=one/', 'title' => 'Slash-valued query wins'],
+            ['url' => 'https://www.example.com/item?variant=one/&utm_source=duplicate', 'title' => 'Tracking duplicate'],
+            ['url' => 'https://example.com/item?variant=one', 'title' => 'Distinct query value'],
+        ]],
+    ])]);
+
+    $result = app(FirecrawlSearchDriver::class)->run($this->searchRequest());
+
+    expect($result->citations->pluck('source.url')->all())->toBe([
+        'https://example.com/item/?variant=one/',
+        'https://example.com/item?variant=one',
+    ])->and($result->content)->toContain('Slash-valued query wins')
+        ->toContain('Distinct query value')
+        ->not->toContain('Tracking duplicate');
+});
+
 it('caps retained results to the requested per-source limit and bounds rendered provider text', function (): void {
     Http::fake(['*' => Http::response([
         'success' => true,
@@ -268,7 +321,14 @@ it('rejects invalid options before sending any request', function (array $option
     'empty categories' => [['categories' => []], [Corpus::Web], 'categories'],
     'unsupported category' => [['categories' => ['developer']], [Corpus::Web], 'supported'],
     'unsupported tbs' => [['tbs' => 'soon'], [Corpus::Web], 'tbs'],
+    'orphan custom range marker' => [['tbs' => 'cdr:1'], [Corpus::Web], 'custom ranges'],
     'incomplete date range' => [['tbs' => 'cdr:1,cd_min:01/01/2026'], [Corpus::Web], 'custom ranges'],
+    'orphan minimum date' => [['tbs' => 'cd_min:01/01/2026'], [Corpus::Web], 'custom ranges'],
+    'orphan maximum date' => [['tbs' => 'cd_max:01/31/2026'], [Corpus::Web], 'custom ranges'],
+    'orphan date pair' => [['tbs' => 'cd_min:01/01/2026,cd_max:01/31/2026'], [Corpus::Web], 'custom ranges'],
+    'differing duplicate relative ranges' => [['tbs' => 'qdr:d,qdr:w'], [Corpus::Web], 'unsupported format'],
+    'differing duplicate minimum dates' => [['tbs' => 'cdr:1,cd_min:01/01/2026,cd_min:02/30/2026,cd_max:01/31/2026'], [Corpus::Web], 'unsupported format'],
+    'differing duplicate maximum dates' => [['tbs' => 'cdr:1,cd_min:01/01/2026,cd_max:01/31/2026,cd_max:02/30/2026'], [Corpus::Web], 'unsupported format'],
     'impossible date' => [['tbs' => 'cdr:1,cd_min:02/30/2026,cd_max:03/01/2026'], [Corpus::Web], 'invalid date'],
     'reversed date range' => [['tbs' => 'cdr:1,cd_min:12/31/2026,cd_max:01/01/2026'], [Corpus::Web], 'must not follow'],
     'invalid country' => [['country' => 'Canada'], [Corpus::Web], 'country'],
@@ -277,6 +337,16 @@ it('rejects invalid options before sending any request', function (array $option
     'conflicting domains' => [['includeDomains' => ['example.com'], 'excludeDomains' => ['other.example']], [Corpus::Web], 'mutually exclusive'],
     'non-boolean URL control' => [['ignoreInvalidURLs' => 1], [Corpus::Web], 'boolean'],
 ]);
+
+it('accepts and forwards a complete valid custom date range', function (): void {
+    Http::fake(['*' => Http::response(['success' => true, 'data' => []])]);
+
+    app(FirecrawlSearchDriver::class)->run($this->searchRequest([
+        'tbs' => 'sbd:1,cdr:1,cd_min:01/01/2026,cd_max:01/31/2026',
+    ]));
+
+    Http::assertSent(fn ($request): bool => $request->data()['tbs'] === 'sbd:1,cdr:1,cd_min:01/01/2026,cd_max:01/31/2026');
+});
 
 it('rejects missing credentials and contradictory profile corpora before HTTP', function (): void {
     expect(fn () => app(FirecrawlSearchDriver::class)->run($this->searchRequest(credential: null)))

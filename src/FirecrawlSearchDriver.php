@@ -348,6 +348,7 @@ final readonly class FirecrawlSearchDriver implements Driver
         }
 
         $parts = explode(',', $tbs);
+        $namedParts = [];
         foreach ($parts as $part) {
             if (preg_match('/^qdr:[hdwmy]$/', $part) !== 1
                 && $part !== 'sbd:1'
@@ -355,17 +356,20 @@ final readonly class FirecrawlSearchDriver implements Driver
                 && preg_match('/^cd_(?:min|max):\d{2}\/\d{2}\/\d{4}$/', $part) !== 1) {
                 throw $this->invalidOptions('tbs has an unsupported format');
             }
-        }
-        if (count(array_unique($parts, SORT_STRING)) !== count($parts)) {
-            throw $this->invalidOptions('tbs has an unsupported format');
+
+            [$name] = explode(':', $part, 2);
+            if (isset($namedParts[$name])) {
+                throw $this->invalidOptions('tbs has an unsupported format');
+            }
+            $namedParts[$name] = $part;
         }
 
-        $custom = in_array('cdr:1', $parts, true);
-        $min = $this->tbsPart($parts, 'cd_min:');
-        $max = $this->tbsPart($parts, 'cd_max:');
-        if ($custom !== ($min !== null && $max !== null)) {
+        $customParts = array_intersect_key($namedParts, array_flip(['cdr', 'cd_min', 'cd_max']));
+        if ($customParts !== [] && count($customParts) !== 3) {
             throw $this->invalidOptions('tbs custom ranges require cdr:1, cd_min, and cd_max');
         }
+        $min = $namedParts['cd_min'] ?? null;
+        $max = $namedParts['cd_max'] ?? null;
         $minDate = $min === null ? null : $this->usDate(substr($min, 7));
         $maxDate = $max === null ? null : $this->usDate(substr($max, 7));
         if (($min !== null && $minDate === null) || ($max !== null && $maxDate === null)) {
@@ -376,18 +380,6 @@ final readonly class FirecrawlSearchDriver implements Driver
         }
 
         return $tbs;
-    }
-
-    /** @param list<string> $parts */
-    private function tbsPart(array $parts, string $prefix): ?string
-    {
-        foreach ($parts as $part) {
-            if (str_starts_with($part, $prefix)) {
-                return $part;
-            }
-        }
-
-        return null;
     }
 
     private function usDate(string $value): ?int
