@@ -33,19 +33,21 @@ function prRunner(
     string $extension = "gh signoff\tbasecamp/gh-signoff\tv1.0.0",
     ?string $failingCheck = null,
     string $phpVersion = '8.4.12',
-    string $branch = 'feat/exact-sha-signoff',
+    array|string $branch = 'feat/exact-sha-signoff',
 ): array {
     $directory = sys_get_temp_dir().'/firecrawl-pr-workflow-test-'.bin2hex(random_bytes(8));
     mkdir($directory, 0700, true);
     prTemporaryDirectories()->append($directory);
     $path = $directory.'/'.PR_SHA.'.json';
     $calls = new ArrayObject;
+    $branchIndex = 0;
     $headIndex = 0;
     $worktreeIndex = 0;
 
     $run = function (string $command, array $arguments, array $options = []) use (
         $calls,
         $branch,
+        &$branchIndex,
         $extension,
         $failingCheck,
         $headSequence,
@@ -77,7 +79,10 @@ function prRunner(
         }
 
         if ($command === 'git' && $arguments === ['branch', '--show-current']) {
-            return prSuccess($branch."\n");
+            $value = is_array($branch) ? $branch[min($branchIndex, count($branch) - 1)] : $branch;
+            $branchIndex++;
+
+            return prSuccess($value."\n");
         }
 
         if ($command === 'php' && $arguments[0] === '-r') {
@@ -412,6 +417,22 @@ it('rechecks the clean unchanged HEAD immediately before signoff', function (arr
     'worktree drift' => [[PR_SHA], ['', ' M README.md'], 'worktree must be clean'],
 ]);
 
+it('rejects a branch switch at the same clean approved HEAD before signoff', function (): void {
+    $mock = prRunner(branch: ['feat/exact-sha-signoff', 'feat/other']);
+    $workflow = new PrWorkflow($mock['run'], [
+        'PATH' => '/usr/bin',
+        'HOME' => '/home/user',
+        'GH_SIGNOFF_TOKEN' => 'status-token',
+    ]);
+    prWriteReceipt($mock['path'], prValidReceipt($workflow));
+
+    expect(fn () => $workflow->signoff(PR_SHA))->toThrow(RuntimeException::class, 'current Git branch changed');
+    expect(array_filter(
+        $mock['calls']->getArrayCopy(),
+        fn (array $call): bool => $call['command'] === 'gh' && $call['arguments'][0] === 'signoff',
+    ))->toBe([]);
+});
+
 it('maps the dedicated token only for authenticated GitHub preflight and exact unforced signoff', function (): void {
     $mock = prRunner();
     $workflow = new PrWorkflow($mock['run'], [
@@ -431,6 +452,7 @@ it('maps the dedicated token only for authenticated GitHub preflight and exact u
     foreach ($githubCalls as $call) {
         expect($call['options']['env']['GH_TOKEN'])->toBe('status-token')
             ->and($call['options']['env']['GH_REPO'])->toBe(PrWorkflow::EXPECTED_REPOSITORY)
+            ->and($call['options']['env']['GH_HOST'])->toBe('github.com')
             ->and($call['options']['env'])->not->toHaveKeys(['GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY']);
     }
 
@@ -456,6 +478,6 @@ it('maps the dedicated token only for authenticated GitHub preflight and exact u
     }
 
     foreach (array_filter($mock['calls']->getArrayCopy(), fn (array $call): bool => $call['command'] !== 'gh') as $call) {
-        expect($call['options']['env'])->not->toHaveKeys(['GH_TOKEN', 'GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY', 'GH_REPO']);
+        expect($call['options']['env'])->not->toHaveKeys(['GH_TOKEN', 'GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY', 'GH_REPO', 'GH_HOST']);
     }
 });

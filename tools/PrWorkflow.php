@@ -133,6 +133,7 @@ final class PrWorkflow
         $githubEnvironment = $readEnvironment;
         $githubEnvironment['GH_TOKEN'] = $token;
         $githubEnvironment['GH_REPO'] = self::EXPECTED_REPOSITORY;
+        $githubEnvironment['GH_HOST'] = 'github.com';
 
         $this->requireValidReceipt($receipt, $sha, $currentRuntime);
         $branch = $this->git(['branch', '--show-current'], $readEnvironment);
@@ -148,6 +149,10 @@ final class PrWorkflow
 
         if ($this->headSha($readEnvironment) !== $sha) {
             throw new RuntimeException('Git HEAD changed while signoff eligibility was being checked.');
+        }
+
+        if ($this->git(['branch', '--show-current'], $readEnvironment) !== $branch) {
+            throw new RuntimeException('The current Git branch changed while signoff eligibility was being checked.');
         }
 
         $this->successful(
