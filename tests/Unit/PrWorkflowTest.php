@@ -375,12 +375,22 @@ it('requires a valid current branch for the pinned pull-request lookup', functio
     ))->toBe([]);
 });
 
-it('requires the dedicated token after read-only eligibility checks', function (): void {
+it('requires the dedicated token before authenticated GitHub eligibility checks', function (): void {
     $mock = prRunner();
-    $workflow = new PrWorkflow($mock['run'], ['PATH' => '/usr/bin', 'HOME' => '/home/user']);
+    $workflow = new PrWorkflow($mock['run'], [
+        'PATH' => '/usr/bin',
+        'HOME' => '/home/user-with-saved-login',
+        'GH_TOKEN' => 'ambient-token',
+    ]);
     prWriteReceipt($mock['path'], prValidReceipt($workflow));
 
-    expect(fn () => $workflow->signoff(PR_SHA))->toThrow(RuntimeException::class, 'GH_SIGNOFF_TOKEN is required');
+    expect(fn () => $workflow->signoff(PR_SHA))
+        ->toThrow(RuntimeException::class, 'GH_SIGNOFF_TOKEN is required for authenticated GitHub preflight and final signoff');
+
+    expect(array_filter(
+        $mock['calls']->getArrayCopy(),
+        fn (array $call): bool => $call['command'] === 'gh',
+    ))->toBe([]);
 });
 
 it('rechecks the clean unchanged HEAD immediately before signoff', function (array $heads, array $worktrees, string $message): void {
@@ -402,7 +412,7 @@ it('rechecks the clean unchanged HEAD immediately before signoff', function (arr
     'worktree drift' => [[PR_SHA], ['', ' M README.md'], 'worktree must be clean'],
 ]);
 
-it('maps the dedicated token only for the exact unforced signoff command', function (): void {
+it('maps the dedicated token only for authenticated GitHub preflight and exact unforced signoff', function (): void {
     $mock = prRunner();
     $workflow = new PrWorkflow($mock['run'], [
         'PATH' => '/usr/bin',
@@ -418,12 +428,16 @@ it('maps the dedicated token only for the exact unforced signoff command', funct
     $githubCalls = array_values(array_filter($mock['calls']->getArrayCopy(), fn (array $call): bool => $call['command'] === 'gh'));
     $signoffCall = $githubCalls[array_key_last($githubCalls)];
 
+    foreach ($githubCalls as $call) {
+        expect($call['options']['env']['GH_TOKEN'])->toBe('status-token')
+            ->and($call['options']['env']['GH_REPO'])->toBe(PrWorkflow::EXPECTED_REPOSITORY)
+            ->and($call['options']['env'])->not->toHaveKeys(['GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY']);
+    }
+
     expect($signoffCall['arguments'])->toBe(['signoff', '--commit', PR_SHA])
         ->and($signoffCall['arguments'])->not->toContain('--force')
         ->and($signoffCall['arguments'])->not->toContain('-f')
-        ->and($signoffCall['options']['env']['GH_TOKEN'])->toBe('status-token')
-        ->and($signoffCall['options']['env']['GH_REPO'])->toBe(PrWorkflow::EXPECTED_REPOSITORY)
-        ->and($signoffCall['options']['env'])->not->toHaveKeys(['GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY']);
+        ->and($signoffCall['options']['env']['GH_TOKEN'])->toBe('status-token');
 
     $pullRequestCalls = array_values(array_filter($githubCalls, fn (array $call): bool => $call['arguments'][0] === 'pr'));
     expect($pullRequestCalls)->toHaveCount(2);
@@ -441,7 +455,7 @@ it('maps the dedicated token only for the exact unforced signoff command', funct
         ]);
     }
 
-    foreach (array_slice($mock['calls']->getArrayCopy(), 0, -1) as $call) {
-        expect($call['options']['env'])->not->toHaveKeys(['GH_TOKEN', 'GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY']);
+    foreach (array_filter($mock['calls']->getArrayCopy(), fn (array $call): bool => $call['command'] !== 'gh') as $call) {
+        expect($call['options']['env'])->not->toHaveKeys(['GH_TOKEN', 'GH_SIGNOFF_TOKEN', 'FIRECRAWL_API_KEY', 'GH_REPO']);
     }
 });

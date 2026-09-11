@@ -124,29 +124,35 @@ final class PrWorkflow
             self::removeDirectory($runtimeHome);
         }
 
-        $this->requireValidReceipt($receipt, $sha, $currentRuntime);
-        $this->requireSignoffExtension($readEnvironment);
-        $this->requireOpenPullRequestAtSha($sha, $readEnvironment);
-
         $token = $this->environment['GH_SIGNOFF_TOKEN'] ?? '';
 
         if (trim($token) === '') {
-            throw new RuntimeException('GH_SIGNOFF_TOKEN is required for the final signoff status write.');
+            throw new RuntimeException('GH_SIGNOFF_TOKEN is required for authenticated GitHub preflight and final signoff.');
         }
 
-        $this->requireOpenPullRequestAtSha($sha, $readEnvironment);
+        $githubEnvironment = $readEnvironment;
+        $githubEnvironment['GH_TOKEN'] = $token;
+        $githubEnvironment['GH_REPO'] = self::EXPECTED_REPOSITORY;
+
+        $this->requireValidReceipt($receipt, $sha, $currentRuntime);
+        $branch = $this->git(['branch', '--show-current'], $readEnvironment);
+
+        if ($branch === '' || strlen($branch) > 255) {
+            throw new RuntimeException('Git did not resolve a valid current branch for pull-request lookup.');
+        }
+
+        $this->requireSignoffExtension($githubEnvironment);
+        $this->requireOpenPullRequestAtSha($branch, $sha, $githubEnvironment);
+        $this->requireOpenPullRequestAtSha($branch, $sha, $githubEnvironment);
         $this->requireCleanWorktree($readEnvironment);
 
         if ($this->headSha($readEnvironment) !== $sha) {
             throw new RuntimeException('Git HEAD changed while signoff eligibility was being checked.');
         }
 
-        $signoffEnvironment = $readEnvironment;
-        $signoffEnvironment['GH_TOKEN'] = $token;
-        $signoffEnvironment['GH_REPO'] = self::EXPECTED_REPOSITORY;
         $this->successful(
             ($this->runner)('gh', ['signoff', '--commit', $sha], [
-                'env' => $signoffEnvironment,
+                'env' => $githubEnvironment,
                 'inherit' => true,
             ]),
             'gh signoff --commit '.$sha,
@@ -394,9 +400,9 @@ final class PrWorkflow
     }
 
     /** @param array<string, string> $environment */
-    private function requireOpenPullRequestAtSha(string $sha, array $environment): void
+    private function requireOpenPullRequestAtSha(string $branch, string $sha, array $environment): void
     {
-        $pullRequest = $this->currentPullRequest($environment);
+        $pullRequest = $this->currentPullRequest($branch, $environment);
 
         if (($pullRequest['state'] ?? null) !== 'OPEN') {
             throw new RuntimeException('The current branch must have an open pull request.');
@@ -411,14 +417,8 @@ final class PrWorkflow
      * @param  array<string, string>  $environment
      * @return array<string, mixed>
      */
-    private function currentPullRequest(array $environment): array
+    private function currentPullRequest(string $branch, array $environment): array
     {
-        $branch = $this->git(['branch', '--show-current'], $environment);
-
-        if ($branch === '' || strlen($branch) > 255) {
-            throw new RuntimeException('Git did not resolve a valid current branch for pull-request lookup.');
-        }
-
         $output = $this->successful(
             ($this->runner)('gh', [
                 'pr',
