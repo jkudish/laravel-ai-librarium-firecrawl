@@ -28,6 +28,10 @@ final readonly class FirecrawlResultMapper
     /** @return array<array-key, mixed> */
     public function decode(string $output): array
     {
+        if (preg_match('/\A```json\r?\n(?<json>.*)\r?\n```(?:\r?\n)?\z/s', $output, $matches) === 1) {
+            $output = $matches['json'];
+        }
+
         try {
             $value = json_decode($output, true, 32, JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
