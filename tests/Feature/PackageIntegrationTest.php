@@ -15,6 +15,7 @@ use Jkudish\LaravelAiLibrarium\Facades\Librarium;
 use Jkudish\LaravelAiLibrarium\Profile;
 use Jkudish\LaravelAiLibrarium\Profiles\Enums\ObservationMode;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\Authentication;
+use Jkudish\LaravelAiLibrarium\Responses\Enums\ResponseStatus;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\ResultKind;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\RetrievalMethod;
 use Jkudish\LaravelAiLibrarium\Responses\ResearchResult;
@@ -246,6 +247,62 @@ it('runs each provider mode through core preflight and result acceptance', funct
         expect($result->providerMeta)->not->toHaveProperty('configured_context');
     }
 })->with(['interact', 'agent']);
+
+it('accepts an exact outer JSON fence through the facade without retaining provider envelope data', function (): void {
+    $observation = packageIntegrationObservation();
+    $json = json_encode($observation, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+    $factory = bindPackageIntegrationSdk(packageIntegrationSdk([
+        ['success' => true, 'data' => ['markdown' => 'initial', 'metadata' => ['scrapeId' => 'scrape-1']]],
+        ['success' => true],
+    ]));
+    Http::fake(['*' => Http::response([
+        'success' => true,
+        'output' => "```json\n{$json}\n```",
+        'requestId' => 'provider-request-secret',
+        'headers' => ['Authorization' => 'Bearer credential-secret'],
+        'cdpUrl' => 'wss://provider.example/session-secret',
+        'rawResponse' => 'unrelated-provider-response',
+    ])]);
+    config()->set('librarium.profiles.firecrawl-package', packageIntegrationProfile('interact'));
+
+    $response = Librarium::query('What is new?')
+        ->using('firecrawl-package')
+        ->run();
+    $serialized = json_encode($response->toArray(), JSON_THROW_ON_ERROR);
+
+    expect($response->status)->toBe(ResponseStatus::Succeeded)
+        ->and($response->results)->toHaveCount(1)
+        ->and($response->results->sole()->content)->toBe('Observed through the package runtime.')
+        ->and($serialized)->not->toContain('provider-request-secret')
+        ->not->toContain('credential-secret')
+        ->not->toContain('session-secret')
+        ->not->toContain('unrelated-provider-response')
+        ->and($factory->count)->toBe(2);
+});
+
+it('rejects a fenced observation with trailing prose through the facade', function (): void {
+    $json = json_encode(packageIntegrationObservation(), JSON_THROW_ON_ERROR);
+    bindPackageIntegrationSdk(packageIntegrationSdk([
+        ['success' => true, 'data' => ['markdown' => 'initial', 'metadata' => ['scrapeId' => 'scrape-1']]],
+        ['success' => true],
+    ]));
+    Http::fake(['*' => Http::response([
+        'success' => true,
+        'output' => "```json\n{$json}\n```\nprovider-secret-prose",
+    ])]);
+    config()->set('librarium.profiles.firecrawl-package', packageIntegrationProfile('interact'));
+
+    $response = Librarium::query('What is new?')
+        ->using('firecrawl-package')
+        ->run();
+
+    expect($response->status)->toBe(ResponseStatus::Failed)
+        ->and($response->results)->toBeEmpty()
+        ->and($response->errors)->toHaveCount(1)
+        ->and($response->errors->sole()->code)->toBe('firecrawl.invalid_output')
+        ->and($response->errors->sole()->message)->toBe('Firecrawl returned invalid observation JSON.')
+        ->and(json_encode($response->toArray(), JSON_THROW_ON_ERROR))->not->toContain('provider-secret-prose');
+});
 
 it('rejects legacy Firecrawl surface semantics during core preflight without reaching the provider', function (): void {
     $factory = bindPackageIntegrationSdk(packageIntegrationSdk([]));
