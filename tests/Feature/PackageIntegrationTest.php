@@ -198,6 +198,17 @@ it('rejects legacy Firecrawl surface semantics during core preflight without rea
     expect($factory->count)->toBe(0);
 });
 
+it('rejects target URL userinfo during core preflight without reaching the provider', function (): void {
+    $factory = bindPackageIntegrationSdk(packageIntegrationSdk([]));
+    $profile = packageIntegrationProfile('agent');
+    $profile['options']['target_url'] = 'https://consumer@example.com/ai';
+    config()->set('librarium.profiles.firecrawl-package', $profile);
+
+    expect(fn () => Librarium::query('What is new?')->using('firecrawl-package')->preview())
+        ->toThrow(ValidationException::class, 'must not contain user information');
+    expect($factory->count)->toBe(0);
+});
+
 it('retains both context metadata layers through terminal core serialization', function (): void {
     $result = app(FirecrawlResultMapper::class)->result(
         $this->request([

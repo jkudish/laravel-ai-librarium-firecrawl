@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Jkudish\LaravelAiLibrariumFirecrawl;
 
 use Carbon\CarbonImmutable;
+use Closure;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Validation\ValidationException;
 use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
@@ -161,7 +162,16 @@ final readonly class FirecrawlResultMapper
                 'answer' => ['nullable', 'string', 'min:1', 'max:50000'],
                 'citations' => ['required', 'array', 'list', 'max:20'],
                 'citations.*' => ['array:url,title,excerpt'],
-                'citations.*.url' => ['required', 'url:http,https', 'max:2048'],
+                'citations.*.url' => [
+                    'required',
+                    'url:http,https',
+                    'max:2048',
+                    static function (string $attribute, mixed $value, Closure $fail): void {
+                        if (is_string($value) && self::urlContainsUserInfo($value)) {
+                            $fail("The {$attribute} must not contain user information.");
+                        }
+                    },
+                ],
                 'citations.*.title' => ['nullable', 'string', 'min:1', 'max:500'],
                 'citations.*.excerpt' => ['nullable', 'string', 'min:1', 'max:1000'],
                 'challenge' => ['required', 'string', 'in:none,captcha,blocked,unknown'],
@@ -212,6 +222,14 @@ final readonly class FirecrawlResultMapper
     private function optionString(array $options, string $key): ?string
     {
         return $this->nullableString($options, $key);
+    }
+
+    private static function urlContainsUserInfo(string $url): bool
+    {
+        $parts = parse_url($url);
+
+        return is_array($parts)
+            && (array_key_exists('user', $parts) || array_key_exists('pass', $parts));
     }
 
     /**

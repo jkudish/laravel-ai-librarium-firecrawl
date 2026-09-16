@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Jkudish\LaravelAiLibrariumFirecrawl;
 
 use Carbon\CarbonImmutable;
+use Closure;
 use Firecrawl\Models\AgentOptions;
 use Firecrawl\Models\AgentStatusResponse;
 use Firecrawl\Models\LocationConfig;
@@ -44,7 +45,16 @@ final readonly class FirecrawlDriver implements Driver
     {
         return [
             'mode' => ['required', 'string', 'in:interact,agent'],
-            'target_url' => ['required', 'url:http,https', 'max:2048'],
+            'target_url' => [
+                'required',
+                'url:http,https',
+                'max:2048',
+                static function (string $attribute, mixed $value, Closure $fail): void {
+                    if (is_string($value) && self::urlContainsUserInfo($value)) {
+                        $fail("The {$attribute} must not contain user information.");
+                    }
+                },
+            ],
             'surface' => ['required', 'string', 'min:1', 'max:255'],
             'locale' => ['sometimes', 'string', 'min:2', 'max:35'],
             'country' => ['sometimes', 'string', 'size:2', 'uppercase'],
@@ -162,10 +172,12 @@ final readonly class FirecrawlDriver implements Driver
             throw new DriverException('firecrawl.invalid_response', 'Firecrawl did not accept the Agent request.');
         }
 
-        try {
-            $this->webhooks->bind('firecrawl', $request->requestId, $request->profile->id, $jobId);
-        } catch (Throwable) {
-            // Polling is authoritative; webhook delivery is only a wake hint.
+        if ($webhook !== null) {
+            try {
+                $this->webhooks->bind('firecrawl', $request->requestId, $request->profile->id, $jobId);
+            } catch (Throwable) {
+                // Polling is authoritative; webhook delivery is only a wake hint.
+            }
         }
 
         $expected = $this->configuredPositiveInt('firecrawl-librarium.expected_duration_seconds', 60);
@@ -176,7 +188,10 @@ final readonly class FirecrawlDriver implements Driver
         $request->progress('Firecrawl Agent accepted the surface observation job.');
 
         while (true) {
-            $firecrawl = $this->clients->forRequest($request);
+            $this->ensureBefore($deadline);
+            $pollRequest = $this->requestWithDeadline($request, $deadline);
+            $firecrawl = $this->clients->forRequest($pollRequest);
+            $this->ensureBefore($deadline);
             $providerOperationsStarted = $this->operationStarted($providerOperationsStarted);
             $status = $firecrawl->getAgentStatus($jobId);
             $deadline = $this->providerDeadline($status, $deadline);
@@ -220,7 +235,14 @@ final readonly class FirecrawlDriver implements Driver
                 $reportedStalled = true;
             }
 
-            $signal = $this->webhooks->get($request->requestId, $request->profile->id);
+            $signal = null;
+            if ($webhook !== null && ! $usedWebhookSignal) {
+                try {
+                    $signal = $this->webhooks->get($request->requestId, $request->profile->id);
+                } catch (Throwable) {
+                    // Polling is authoritative; an unavailable wake hint is equivalent to no hint.
+                }
+            }
             $usableSignal = ! $usedWebhookSignal
                 && $signal !== null
                 && $signal->provider === 'firecrawl'
@@ -229,7 +251,7 @@ final readonly class FirecrawlDriver implements Driver
             if ($usableSignal) {
                 $usedWebhookSignal = true;
             } else {
-                $seconds = min($pollInterval, max(1, (int) floor(CarbonImmutable::now()->diffInSeconds($deadline, false))));
+                $seconds = min((float) $pollInterval, max(0.0, CarbonImmutable::now()->diffInSeconds($deadline, false)));
                 Sleep::for($seconds)->seconds();
             }
         }
@@ -294,6 +316,15 @@ final readonly class FirecrawlDriver implements Driver
         }
         if (CarbonImmutable::now()->greaterThanOrEqualTo($request->deadline)) {
             throw new DriverException('firecrawl.deadline_exceeded', 'The Firecrawl request could not start before the research deadline.');
+        }
+
+        $targetUrl = $this->option($request->profile->options, 'target_url');
+        if ($targetUrl !== null && self::urlContainsUserInfo($targetUrl)) {
+            throw new DriverException(
+                'firecrawl.invalid_options',
+                'The Firecrawl target URL must not contain user information.',
+                false,
+            );
         }
 
         $personalization = $request->profile->options['personalization'] ?? null;
@@ -417,6 +448,28 @@ final readonly class FirecrawlDriver implements Driver
     private function earlier(CarbonImmutable $first, CarbonImmutable $second): CarbonImmutable
     {
         return $first->lessThanOrEqualTo($second) ? $first : $second;
+    }
+
+    private function requestWithDeadline(DriverRequest $request, CarbonImmutable $deadline): DriverRequest
+    {
+        return new DriverRequest(
+            requestId: $request->requestId,
+            requestedProfile: $request->requestedProfile,
+            profile: $request->profile,
+            prompt: $request->prompt,
+            deadline: $deadline,
+            progressCallback: static function (string $message, string $profile) use ($request): void {
+                $request->progress($message);
+            },
+        );
+    }
+
+    private static function urlContainsUserInfo(string $url): bool
+    {
+        $parts = parse_url($url);
+
+        return is_array($parts)
+            && (array_key_exists('user', $parts) || array_key_exists('pass', $parts));
     }
 
     /** @param array<string, mixed> $options */
