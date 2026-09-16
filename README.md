@@ -18,6 +18,9 @@ Set `FIRECRAWL_API_KEY`, then enable only the Profile you need.
 
 ## Collect a consumer surface
 
+In the published `config/firecrawl-librarium.php`, edit these existing values.
+Keep every unshown Profile field.
+
 ```php
 // config/firecrawl-librarium.php
 'register_profile' => true,
@@ -53,12 +56,14 @@ Every new surface result uses `surface_observation`, `surface_snapshot`, and
 
 ## Run raw search
 
-Raw Search is a separate opt-in Profile:
+Raw Search is a separate opt-in Profile. In the published config, edit these
+existing values and keep every unshown Profile field:
 
 ```php
 // config/firecrawl-librarium.php
 'register_search_profile' => true,
 'search_profile' => [
+    'corpora' => ['web', 'news'],
     'options' => [
         'sources' => ['web', 'news'],
         'limit' => 10,
@@ -68,7 +73,17 @@ Raw Search is a separate opt-in Profile:
 ],
 ```
 
-When `sources` changes, configure the Profile `corpora` in the same order.
+Run the enabled Profile. This may incur Firecrawl charges:
+
+```php
+use Jkudish\LaravelAiLibrarium\Facades\Librarium;
+
+$response = Librarium::query('What changed in Laravel this week?')
+    ->using('firecrawl-search')
+    ->run();
+```
+
+When `sources` changes, update the Profile `corpora` in the same order.
 Search accepts only absolute HTTPS result URLs, normalizes web descriptions and
 news snippets, and keeps provider-reported citations. It records bounded
 `creditsUsed` as `provider_meta.credits_used` without inventing a currency cost.
