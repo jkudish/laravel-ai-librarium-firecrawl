@@ -4,17 +4,27 @@ Optional Firecrawl search and surface-collection adapter for
 `jkudish/laravel-ai-librarium`. Firecrawl and its SDK stay outside the core
 package.
 
-> This adapter does not have a published release. The Composer command below
-> applies after a compatible release.
+## Install
 
-## Install after release
+Requires PHP 8.4+ and Laravel 13.
 
 ```bash
 composer require jkudish/laravel-ai-librarium-firecrawl
 php artisan vendor:publish --tag=firecrawl-librarium-config
 ```
 
-Set `FIRECRAWL_API_KEY`, then enable only the Profile you need.
+Composer also installs `jkudish/laravel-ai-librarium` 1.x if your application
+does not have it yet; follow that package's README for core setup.
+
+Add your Firecrawl key to `.env`:
+
+```dotenv
+FIRECRAWL_API_KEY=fc-...
+```
+
+The Firecrawl SDK reads it as `firecrawl.api_key`, and the adapter uses that
+value for any Profile without its own `credential`. Both Profiles are off by
+default. Enable only the one you need.
 
 ## Collect a consumer surface
 
