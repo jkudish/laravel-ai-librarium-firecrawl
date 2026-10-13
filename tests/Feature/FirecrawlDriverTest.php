@@ -17,6 +17,7 @@ use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
 use Jkudish\LaravelAiLibrarium\Execution\DriverRequest;
 use Jkudish\LaravelAiLibrarium\Profiles\Enums\GroundingPolicy;
 use Jkudish\LaravelAiLibrarium\Profiles\Enums\ObservationMode;
+use Jkudish\LaravelAiLibrarium\Recovery\RecoveryRequest;
 use Jkudish\LaravelAiLibrarium\ResearchState;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\Corpus;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\ResultKind;
@@ -56,7 +57,7 @@ function bindSdk(FirecrawlClient $client): stdClass
     {
         public function __construct(private FirecrawlClient $client, private stdClass $calls) {}
 
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             $this->calls->count++;
 
@@ -190,7 +191,7 @@ it('retains each personalization declaration without promoting it to canonical c
 it('maps unexpected scrape failures to a fixed safe stage error', function (): void {
     app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
     {
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             throw new RuntimeException('secret-key https://provider.test/path scrape-id headers body stack');
         }
@@ -230,7 +231,7 @@ it('maps unexpected interaction failures to a fixed safe stage error', function 
 it('maps unexpected Agent transport failures to the fixed interaction stage error', function (): void {
     app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
     {
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             throw new RuntimeException('secret-key https://provider.test/path agent-id headers body stack');
         }
@@ -273,7 +274,7 @@ it('maps unexpected observation failures to a fixed safe stage error', function 
 it('preserves specific driver errors across stage boundaries', function (): void {
     app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
     {
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             throw new DriverException('firecrawl.connection', 'Firecrawl could not be reached.', false);
         }
@@ -473,7 +474,7 @@ it('does not let best-effort browser cleanup start after the request deadline', 
     {
         public function __construct(private FirecrawlClient $client) {}
 
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             if (now()->greaterThanOrEqualTo($request->deadline)) {
                 throw new DriverException('firecrawl.deadline_exceeded', 'deadline');
@@ -640,7 +641,7 @@ it('bounds every Agent poll factory request to the current trustworthy deadline'
     {
         public function __construct(private FirecrawlClient $client, private stdClass $calls) {}
 
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             $this->calls->deadlines[] = $request->deadline->toIso8601String();
 

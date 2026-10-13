@@ -1,144 +1,131 @@
 # Laravel AI Librarium: Firecrawl
 
-Optional Firecrawl search and surface-collection adapter for
-`jkudish/laravel-ai-librarium`. Firecrawl and its SDK stay outside the core
-package.
+Optional **browser engine collector** for `jkudish/laravel-ai-librarium`.
+Firecrawl search is built into core with Laravel HTTP; this adapter owns only
+SDK Interact and asynchronous Agent collection.
 
-> This adapter does not have a published release. The Composer command below
-> applies after a compatible release.
+## Install and configure
 
-## Install after release
+PHP 8.4+, Laravel 13 and the compatible Librarium 1.0 surface are required.
+Neither candidate is published; the following command applies after release:
 
 ```bash
 composer require jkudish/laravel-ai-librarium-firecrawl
 php artisan vendor:publish --tag=firecrawl-librarium-config
 ```
 
-Set `FIRECRAWL_API_KEY`, then enable only the Profile you need.
-
-## Collect a consumer surface
-
-In the published `config/firecrawl-librarium.php`, edit these existing values.
-Keep every unshown Profile field.
+Set `FIRECRAWL_API_KEY` through the SDK's `config/firecrawl.php`, or set
+`services.firecrawl.key`. An explicit `engines.key` takes precedence. Select
+the collector in Librarium configuration:
 
 ```php
-// config/firecrawl-librarium.php
-'register_profile' => true,
-'profile' => [
-    'options' => [
-        'mode' => 'interact',
-        'target_url' => 'https://example.ai/',
-        'surface' => 'example-ai',
-        'authentication' => 'anonymous',
-        'personalization' => 'unknown',
-        'account_context' => 'signed_out',
-        'locale' => 'en-CA',
-        'country' => 'CA',
-        'device' => 'desktop',
-    ],
+// config/librarium.php
+'engines' => [
+    'collector' => 'firecrawl',
+    'mode' => 'interact',
+    'chatgpt' => ['options' => ['locale' => 'en-CA', 'country' => 'CA', 'device' => 'desktop']],
 ],
 ```
-
-Anonymous collection is the only accepted execution policy. Firecrawl does not
-prove authentication or personalization. Consumer declarations stay labelled
-in provider metadata; they are not promoted to observed provenance facts.
-
-- `interact` uses the official SDK for scrape and cleanup, plus one narrow
-  prompt-only HTTP seam the SDK does not currently expose.
-- `agent` uses the SDK's asynchronous Agent API. It rejects locale, country,
-  and device options because that API does not enforce them.
-- Polling is authoritative. Signed webhooks are idempotent wake hints.
-- Challenge and login-wall output describes one configured surface and context,
-  not universal behavior.
-
-Every new surface result uses `surface_observation`, `surface_snapshot`, and
-`surface_collector`. Contradictory semantics fail preflight.
-
-## Run raw search
-
-Raw Search is a separate opt-in Profile. In the published config, edit these
-existing values and keep every unshown Profile field:
-
-```php
-// config/firecrawl-librarium.php
-'register_search_profile' => true,
-'search_profile' => [
-    'corpora' => ['web', 'news'],
-    'options' => [
-        'sources' => ['web', 'news'],
-        'limit' => 10,
-        'country' => 'CA',
-        'includeDomains' => ['example.com'],
-    ],
-],
-```
-
-Run the enabled Profile. This may incur Firecrawl charges:
 
 ```php
 use Jkudish\LaravelAiLibrarium\Facades\Librarium;
 
-$response = Librarium::query('What changed in Laravel this week?')
-    ->using('firecrawl-search')
+$run = Librarium::research('What does this product say about Laravel?')
+    ->only(['chatgpt', 'gemini-app'])
     ->run();
+
+$run->result('chatgpt'); // observation: surface
+$run->evidence('chatgpt'); // Redacted, separate from public Run JSON.
 ```
 
-When `sources` changes, update the Profile `corpora` in the same order.
-Search accepts only absolute HTTPS result URLs, normalizes web descriptions and
-news snippets, and keeps provider-reported citations. It records bounded
-`creditsUsed` as `provider_meta.credits_used` without inventing a currency cost.
+Supported engines: `chatgpt`, `gemini-app`, `google-ai-mode`,
+`google-ai-overview`, `copilot`. Their starting URLs are in
+`firecrawl-librarium.urls`. Engines run only when named, never by default, and
+have no deep variant. `deep()` selects variants; it does not select Agent mode.
 
-The shipped Search Profile has no pricing declaration. A result limit is not a
-conservative preflight credit bound. Applications may add a configured-only
-pricing identity only when they own a truthful bound for their Firecrawl plan.
+## Custom engines by URL
 
-## Safety limits
+```php
+// config/librarium.php
+'engines' => [
+    'collector' => 'firecrawl',
+    'custom' => [
+        'example-ai' => ['url' => 'https://example.ai/', 'mode' => 'agent'],
+    ],
+],
+```
 
-- Citations are limited to 20 and excerpts to 1,000 characters.
-- At most 10 artifacts are retained as bounded receipts.
-- Capability URLs, signed URLs, credentials, browser payloads, and raw provider
-  bodies are excluded from results and exceptions.
-- A raw artifact URL is retained only when it exactly matches the explicit
-  `public_artifact_references` allowlist and passes URL safety checks.
-- Digests and redaction states are receipts, not retrievable references.
-- The default API URL is `https://api.firecrawl.dev`. Custom HTTPS endpoints
-  require `allow_custom_api_url` and remain the application's network-policy
-  responsibility.
+Use `only(['example-ai'])` like any other engine. URLs and credentials belong
+in configuration, not request overrides. Targets may not contain userinfo.
+Apps own target authorization, network policy and permission to collect the
+surface. Changing a URL or binding invalidates saved signed handles.
 
-## Webhooks
+## Inline Interact and durable Agent
 
-Set `firecrawl-librarium.webhook.url` and the matching
-`firecrawl-librarium.webhook.secret`. The route verifies
-`X-Firecrawl-Signature: sha256=<hex>`, accepts only `agent.completed` and
-`agent.failed`, deduplicates `webhookId`, and requires the job to match the
-Librarium request and Profile.
+- **Interact:** the official SDK scrapes and cleans up the browser; the existing
+  narrow prompt-only Laravel HTTP seam supplies the interaction the SDK cannot
+  express. Locale/country/device are configured controls, not proof of the
+  observed user's context. Cleanup is best effort within the deadline.
+- **Agent:** one SDK submission saves its signed handle in the Run's private
+  state. `run()` waits; `queue()` dispatches core's single encrypted job;
+  `find()->refresh()` observes each pending task once, with no submission,
+  sleep, cancellation or paid retry. Agent rejects locale/country/device
+  because its API does not enforce them. Credits remain credits, never USD.
+
+```php
+$queued = Librarium::research('Observe the configured surface')
+    ->only(['example-ai'])
+    ->queue();
+$id = $queued->id();
+// The job starts the task. Come back after the worker runs:
+$run = Librarium::find($id)->refresh();
+```
+
+Storage, retention, deadlines and budget admission belong to core. Firecrawl
+has no shipped bounded USD estimate; a dollar cap skips it as `unpriced`.
+Tasks can outlive local waiting. Losing an accepted submission's response is
+ambiguous, not permission to resubmit. Recover saved handles with the original
+app key, credential and binding. Provider/account limits are still necessary.
+
+## Webhooks and evidence
+
+Set `firecrawl-librarium.webhook.url` to your HTTPS receiver and
+`firecrawl-librarium.webhook.secret` to its signing secret. The route verifies
+the raw body's `X-Firecrawl-Signature: sha256=<hex>`, permits only
+`agent.completed`/`agent.failed`, deduplicates `webhookId`, and requires a job
+bound to the Run and engine variant. A verified event records a wake hint;
+it cannot finish the Run or supply an answer. SDK retrieval stays authoritative.
+
+Anonymous collection is the only execution policy. Authentication and
+personalization are not established by a declaration. Challenges and login
+walls describe one observation, not universal behavior. Citations are limited
+to 20, excerpts to 1,000 characters and artifact receipts to 10. Capability
+URLs, credentials and browser payloads are excluded from terminal output.
+Only exact, safe URLs in `public_artifact_references` survive as artifact
+references; otherwise receipts contain digests. Treat answers and URLs as
+untrusted. Core redacts evidence before saving it; restrict Run access and
+choose retention for private source material.
 
 ## Development
 
 ```bash
-composer install
 composer test
 composer analyse
-composer format
+composer format:check
 composer validate --strict
 ```
 
-Here, `composer format` runs `pint --test` and does not rewrite files. Ordinary
-tests make no network calls.
+`composer format` and `format:check` are nonmutating Pint checks. Offline tests
+use Laravel HTTP fakes and a Guzzle MockHandler for the official SDK. Test PHP
+8.4 with lowest dependencies and PHP 8.5 with highest dependencies, against
+the exact core candidate. Development dependency overrides belong in an
+isolated Composer harness, never the published library's repositories.
 
-`composer test:live` and `composer test:live-search` are separate paid canaries.
-They require exact opt-in and spend-acknowledgement values in addition to a
-credential. Do not run either command without fresh authorization for that
-specific provider request.
+Commit all intended changes, require a clean worktree and run `composer pr:check`
+at the final HEAD. It writes only a local exact-SHA receipt. No signoff,
+provider call, publication, migration or deployment is authorized by that gate.
+`composer test:live` is a separate paid browser canary requiring fresh approval,
+credentials, exact opt-in and spend acknowledgement. It was not run for this
+candidate; its acknowledgement is not provider-enforced spending control.
 
-For an exact committed candidate, run `composer pr:check` from a clean
-worktree. It runs the repository-owned offline checks and writes a local
-exact-SHA receipt. It does not install dependencies, call Firecrawl, publish,
-release, deploy, push, or write a GitHub status.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor path.
-
-## License
-
-This package is open-source software licensed under the
-[MIT license](LICENSE.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). [MIT license](LICENSE.md).

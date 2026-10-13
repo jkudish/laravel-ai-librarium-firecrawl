@@ -11,6 +11,7 @@ use Illuminate\Validation\ValidationException;
 use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
 use Jkudish\LaravelAiLibrarium\Execution\DriverRequest;
 use Jkudish\LaravelAiLibrarium\Profiles\Enums\ObservationMode;
+use Jkudish\LaravelAiLibrarium\Recovery\RecoveryRequest;
 use Jkudish\LaravelAiLibrarium\Responses\Citation;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\Authentication;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\CitationDerivation;
@@ -50,7 +51,7 @@ final readonly class FirecrawlResultMapper
 
     /** @param array<array-key, mixed> $observation */
     public function result(
-        DriverRequest $request,
+        DriverRequest|RecoveryRequest $request,
         array $observation,
         ?string $model = null,
         ?int $creditsUsed = null,

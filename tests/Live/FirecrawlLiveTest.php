@@ -3,8 +3,6 @@
 declare(strict_types=1);
 
 use Jkudish\LaravelAiLibrarium\Facades\Librarium;
-use Jkudish\LaravelAiLibrarium\Responses\Enums\ResponseStatus;
-use Jkudish\LaravelAiLibrarium\Responses\ResearchError;
 
 it('completes a paid Firecrawl Agent observation through polling', function (): void {
     if (getenv('LIBRARIUM_LIVE_TESTS') !== '1'
@@ -12,28 +10,13 @@ it('completes a paid Firecrawl Agent observation through polling', function (): 
         throw new RuntimeException('The live Firecrawl canary requires explicit test and spend acknowledgement.');
     }
 
-    $profile = config('firecrawl-librarium.profile');
-    expect($profile)->toBeArray();
-    $profile['options'] = [
-        'mode' => 'agent',
-        'target_url' => (string) getenv('FIRECRAWL_LIVE_TARGET_URL'),
-        'surface' => (string) (getenv('FIRECRAWL_LIVE_SURFACE') ?: 'release-canary'),
-        'authentication' => 'anonymous',
-    ];
-    $profile['credential'] = (string) getenv('FIRECRAWL_API_KEY');
-    config()->set('librarium.profiles.firecrawl-live', $profile);
-    config()->set('firecrawl-librarium.api_url', 'https://api.firecrawl.dev');
+    config(['app.key' => 'base64:'.base64_encode(random_bytes(32)), 'librarium.runs.store' => 'memory',
+        'librarium.timeout' => 300, 'librarium.engines.collector' => 'firecrawl',
+        'librarium.engines.key' => (string) getenv('FIRECRAWL_API_KEY'),
+        'librarium.engines.mode' => 'agent',
+        'librarium.engines.custom.release-canary' => ['url' => (string) getenv('FIRECRAWL_LIVE_TARGET_URL')],
+        'firecrawl-librarium.api_url' => 'https://api.firecrawl.dev']);
 
-    $response = Librarium::query('Return the visible answer to: What is the title of this surface?')
-        ->using('firecrawl-live')
-        ->timeout(300)
-        ->run();
-
-    $errors = $response->errors
-        ->map(static fn (ResearchError $error): string => $error->code.': '.$error->message)
-        ->implode('; ');
-
-    expect($response->status)->toBe(ResponseStatus::Succeeded, $errors)
-        ->and($response->results)->toHaveCount(1)
-        ->and($response->results->sole()->provenance->collector)->toBe('firecrawl');
+    $run = Librarium::research('Return the visible answer to: What is the title of this surface?')->only(['release-canary'])->run();
+    expect($run->status())->toBe('done')->and($run->result('release-canary')['provenance']['collector'])->toBe('firecrawl');
 });

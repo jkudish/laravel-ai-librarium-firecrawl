@@ -8,11 +8,12 @@ use Carbon\CarbonImmutable;
 use Firecrawl\Client\FirecrawlClient;
 use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
 use Jkudish\LaravelAiLibrarium\Execution\DriverRequest;
+use Jkudish\LaravelAiLibrarium\Recovery\RecoveryRequest;
 use Jkudish\LaravelAiLibrariumFirecrawl\Contracts\CreatesFirecrawlClient;
 
 final readonly class FirecrawlClientFactory implements CreatesFirecrawlClient
 {
-    public function forRequest(DriverRequest $request): FirecrawlClient
+    public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
     {
         $remaining = (int) floor(CarbonImmutable::now()->diffInSeconds($request->deadline, false));
         $apiUrl = config('firecrawl-librarium.api_url', 'https://api.firecrawl.dev');
