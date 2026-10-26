@@ -6,16 +6,25 @@ SDK Interact and asynchronous Agent collection.
 
 ## Install and configure
 
-PHP 8.4+, Laravel 13 and the compatible Librarium 1.0 surface are required.
-Neither candidate is published; the following command applies after release:
+Requires PHP 8.4+ and Laravel 13.
 
 ```bash
 composer require jkudish/laravel-ai-librarium-firecrawl
 php artisan vendor:publish --tag=firecrawl-librarium-config
 ```
 
-Set `FIRECRAWL_API_KEY` through the SDK's `config/firecrawl.php`, or set
-`services.firecrawl.key`. An explicit `engines.key` takes precedence. Select
+Composer also installs `jkudish/laravel-ai-librarium` 1.x if your application
+does not have it yet; follow that package's README for core setup.
+
+Add your Firecrawl key to `.env`:
+
+```dotenv
+FIRECRAWL_API_KEY=fc-...
+```
+
+The Firecrawl SDK reads it through its `config/firecrawl.php`; you can set
+`services.firecrawl.key` instead. An explicit `engines.key` takes precedence.
+Select
 the collector in Librarium configuration:
 
 ```php
