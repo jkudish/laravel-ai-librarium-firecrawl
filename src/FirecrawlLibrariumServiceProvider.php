@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Jkudish\LaravelAiLibrariumFirecrawl;
 
 use Illuminate\Support\ServiceProvider;
+use Jkudish\LaravelAiLibrarium\LibrariumManager;
+use Jkudish\LaravelAiLibrarium\Profile;
+use Jkudish\LaravelAiLibrarium\ProfileCatalog;
 use Jkudish\LaravelAiLibrariumFirecrawl\Contracts\CreatesFirecrawlClient;
 use Jkudish\LaravelAiLibrariumFirecrawl\Http\PromptInteractClient;
 
@@ -16,15 +19,35 @@ final class FirecrawlLibrariumServiceProvider extends ServiceProvider
         $this->app->singleton(PromptInteractClient::class);
         $this->app->singleton(CreatesFirecrawlClient::class, FirecrawlClientFactory::class);
         $this->app->singleton(FirecrawlResultMapper::class);
-        $this->app->singleton(FirecrawlSearchResultMapper::class);
         $this->app->singleton(FirecrawlDriver::class);
-        $this->app->singleton(FirecrawlSearchDriver::class);
+        $this->app->singleton(FirecrawlAgentDriver::class);
     }
 
     public function boot(): void
     {
-        $this->registerConfiguredProfile();
-        $this->registerConfiguredSearchProfile();
+        if (blank(config('services.firecrawl.key'))) {
+            config()->set('services.firecrawl.key', config('firecrawl.api_key'));
+        }
+        $this->app->make(LibrariumManager::class)->extendCollector('firecrawl', function (string $engine, array $settings): Profile {
+            $defaults = config('firecrawl-librarium.options', []);
+            $configured = $settings['options'] ?? [];
+            $options = array_replace(
+                is_array($defaults) ? $defaults : [],
+                is_array($configured) ? $configured : [],
+                array_intersect_key($settings, FirecrawlDriver::profileOptionRules()),
+                ['target_url' => $settings['url'] ?? config('firecrawl-librarium.urls.'.$engine), 'surface' => $engine],
+            );
+
+            return $this->app->make(ProfileCatalog::class)->profile('firecrawl-'.$engine, [
+                'driver' => ($options['mode'] ?? null) === 'agent' ? FirecrawlAgentDriver::class : FirecrawlDriver::class,
+                'provider' => 'firecrawl', 'model' => null,
+                'result_kind' => 'surface_observation', 'grounding' => 'optional',
+                'observation' => 'surface_snapshot', 'corpora' => ['web'],
+                'retrieval_methods' => ['surface_collector'], 'prompt' => '{{ query }}',
+                'enabled' => ($settings['enabled'] ?? true) !== false,
+                'options' => $options, 'credential' => $settings['key'] ?? null,
+            ]);
+        });
         $this->loadRoutesFrom(__DIR__.'/../routes/webhooks.php');
 
         if ($this->app->runningInConsole()) {
@@ -32,53 +55,5 @@ final class FirecrawlLibrariumServiceProvider extends ServiceProvider
                 __DIR__.'/../config/firecrawl-librarium.php' => config_path('firecrawl-librarium.php'),
             ], 'firecrawl-librarium-config');
         }
-    }
-
-    private function registerConfiguredProfile(): void
-    {
-        if (config('firecrawl-librarium.register_profile') !== true) {
-            return;
-        }
-
-        $id = config('firecrawl-librarium.profile_id');
-        $profile = config('firecrawl-librarium.profile');
-        if (! is_string($id) || $id === '' || ! is_array($profile)) {
-            return;
-        }
-
-        $profiles = config('librarium.profiles', []);
-        if (! is_array($profiles) || array_key_exists($id, $profiles)) {
-            return;
-        }
-
-        if (blank($profile['credential'] ?? null)) {
-            $profile['credential'] = config('firecrawl.api_key');
-        }
-
-        config()->set('librarium.profiles.'.$id, $profile);
-    }
-
-    private function registerConfiguredSearchProfile(): void
-    {
-        if (config('firecrawl-librarium.register_search_profile') !== true) {
-            return;
-        }
-
-        $id = config('firecrawl-librarium.search_profile_id');
-        $profile = config('firecrawl-librarium.search_profile');
-        if (! is_string($id) || $id === '' || ! is_array($profile)) {
-            return;
-        }
-
-        $profiles = config('librarium.profiles', []);
-        if (! is_array($profiles) || array_key_exists($id, $profiles)) {
-            return;
-        }
-
-        if (blank($profile['credential'] ?? null)) {
-            $profile['credential'] = config('firecrawl.api_key');
-        }
-
-        config()->set('librarium.profiles.'.$id, $profile);
     }
 }

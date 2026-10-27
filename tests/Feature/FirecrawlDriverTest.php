@@ -2,12 +2,14 @@
 
 declare(strict_types=1);
 
+use Carbon\CarbonImmutable;
 use Firecrawl\Client\FirecrawlClient;
 use GuzzleHttp\Client;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
@@ -15,6 +17,7 @@ use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
 use Jkudish\LaravelAiLibrarium\Execution\DriverRequest;
 use Jkudish\LaravelAiLibrarium\Profiles\Enums\GroundingPolicy;
 use Jkudish\LaravelAiLibrarium\Profiles\Enums\ObservationMode;
+use Jkudish\LaravelAiLibrarium\Recovery\RecoveryRequest;
 use Jkudish\LaravelAiLibrarium\ResearchState;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\Corpus;
 use Jkudish\LaravelAiLibrarium\Responses\Enums\ResultKind;
@@ -54,7 +57,7 @@ function bindSdk(FirecrawlClient $client): stdClass
     {
         public function __construct(private FirecrawlClient $client, private stdClass $calls) {}
 
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             $this->calls->count++;
 
@@ -188,7 +191,7 @@ it('retains each personalization declaration without promoting it to canonical c
 it('maps unexpected scrape failures to a fixed safe stage error', function (): void {
     app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
     {
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             throw new RuntimeException('secret-key https://provider.test/path scrape-id headers body stack');
         }
@@ -228,7 +231,7 @@ it('maps unexpected interaction failures to a fixed safe stage error', function 
 it('maps unexpected Agent transport failures to the fixed interaction stage error', function (): void {
     app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
     {
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             throw new RuntimeException('secret-key https://provider.test/path agent-id headers body stack');
         }
@@ -271,7 +274,7 @@ it('maps unexpected observation failures to a fixed safe stage error', function 
 it('preserves specific driver errors across stage boundaries', function (): void {
     app()->instance(CreatesFirecrawlClient::class, new readonly class implements CreatesFirecrawlClient
     {
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             throw new DriverException('firecrawl.connection', 'Firecrawl could not be reached.', false);
         }
@@ -345,6 +348,21 @@ it('rejects each unsupported Agent control before creating a client or sending H
     'country' => [['country' => 'CA']],
     'device' => [['device' => 'desktop']],
 ]);
+
+it('rejects target URL userinfo at direct driver entry before creating a client', function (): void {
+    $factory = bindSdk(sdkWith([]));
+
+    expect(fn () => app(FirecrawlDriver::class)->run($this->request([
+        'mode' => 'agent',
+        'target_url' => 'https://consumer:secret@example.com/ai',
+    ])))->toThrow(function (DriverException $exception): void {
+        expect($exception->errorCode)->toBe('firecrawl.invalid_options')
+            ->and($exception->fallbackAllowed)->toBeFalse()
+            ->and($exception->getMessage())->not->toContain('consumer')
+            ->not->toContain('secret');
+    });
+    expect($factory->count)->toBe(0);
+});
 
 it('retains only explicitly allowlisted non-capability artifact references', function (): void {
     config()->set('firecrawl-librarium.public_artifact_references', [
@@ -456,7 +474,7 @@ it('does not let best-effort browser cleanup start after the request deadline', 
     {
         public function __construct(private FirecrawlClient $client) {}
 
-        public function forRequest(DriverRequest $request): FirecrawlClient
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
         {
             if (now()->greaterThanOrEqualTo($request->deadline)) {
                 throw new DriverException('firecrawl.deadline_exceeded', 'deadline');
@@ -562,6 +580,108 @@ it('uses a bound terminal webhook only once as a polling wake hint', function ()
     Sleep::assertSleptTimes(1);
 });
 
+it('does not access the webhook cache when no callback is configured', function (): void {
+    Sleep::fake();
+    $cache = Mockery::mock(CacheRepository::class);
+    $cache->shouldNotReceive('add');
+    $cache->shouldNotReceive('get');
+    app()->instance(WebhookSignalStore::class, new WebhookSignalStore(
+        cache: $cache,
+        validator: app(ValidationFactory::class),
+        ttl: 300,
+    ));
+    bindSdk(sdkWith([
+        ['success' => true, 'id' => 'agent-job-1'],
+        ['success' => true, 'status' => 'processing'],
+        ['success' => true, 'status' => 'completed', 'data' => observation()],
+    ]));
+
+    $result = app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent']));
+
+    expect($result->content)->toBe('Observed answer.');
+    Sleep::assertSleptTimes(1);
+});
+
+it('treats a configured webhook cache failure as no polling hint', function (): void {
+    Sleep::fake();
+    config()->set('firecrawl-librarium.webhook.url', 'https://consumer.example/webhooks/firecrawl');
+    $cache = Mockery::mock(CacheRepository::class);
+    $cache->shouldReceive('add')->once()->andReturnTrue();
+    $cache->shouldReceive('get')->once()->andThrow(new RuntimeException('cache unavailable'));
+    app()->instance(WebhookSignalStore::class, new WebhookSignalStore(
+        cache: $cache,
+        validator: app(ValidationFactory::class),
+        ttl: 300,
+    ));
+    bindSdk(sdkWith([
+        ['success' => true, 'id' => 'agent-job-1'],
+        ['success' => true, 'status' => 'processing'],
+        ['success' => true, 'status' => 'completed', 'data' => observation()],
+    ]));
+
+    $result = app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent']));
+
+    expect($result->content)->toBe('Observed answer.');
+    Sleep::assertSleptTimes(1);
+});
+
+it('bounds every Agent poll factory request to the current trustworthy deadline', function (): void {
+    Sleep::fake(true, true);
+    CarbonImmutable::setTestNow('2026-09-08 12:00:00 UTC');
+    $startedAt = CarbonImmutable::now();
+    $providerDeadline = $startedAt->addSeconds(90);
+    $client = sdkWith([
+        ['success' => true, 'id' => 'agent-job-1'],
+        ['success' => true, 'status' => 'processing', 'expiresAt' => $providerDeadline->toIso8601String()],
+        ['success' => true, 'status' => 'completed', 'data' => observation()],
+    ]);
+    $calls = new stdClass;
+    $calls->deadlines = [];
+    app()->instance(CreatesFirecrawlClient::class, new readonly class($client, $calls) implements CreatesFirecrawlClient
+    {
+        public function __construct(private FirecrawlClient $client, private stdClass $calls) {}
+
+        public function forRequest(DriverRequest|RecoveryRequest $request): FirecrawlClient
+        {
+            $this->calls->deadlines[] = $request->deadline->toIso8601String();
+
+            return $this->client;
+        }
+    });
+
+    $result = app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent'], deadlineSeconds: 8000));
+
+    expect($result->content)->toBe('Observed answer.')
+        ->and($calls->deadlines)->toBe([
+            $startedAt->addSeconds(8000)->toIso8601String(),
+            $startedAt->addSeconds(7200)->toIso8601String(),
+            $providerDeadline->toIso8601String(),
+        ]);
+});
+
+it('stops before another poll and sleeps only the subsecond time remaining', function (): void {
+    Sleep::fake(true, true);
+    CarbonImmutable::setTestNow('2026-09-08 12:00:00 UTC');
+    $factory = bindSdk(sdkWith([
+        ['success' => true, 'id' => 'agent-job-1'],
+        ['success' => true, 'status' => 'processing'],
+    ]));
+    $base = $this->request(['mode' => 'agent']);
+    $request = new DriverRequest(
+        requestId: $base->requestId,
+        requestedProfile: $base->requestedProfile,
+        profile: $base->profile,
+        prompt: $base->prompt,
+        deadline: CarbonImmutable::now()->addMilliseconds(500),
+        progressCallback: static function (): void {},
+    );
+
+    expect(fn () => app(FirecrawlDriver::class)->run($request))
+        ->toThrow(DriverException::class, 'trustworthy deadline');
+    expect($factory->count)->toBe(2);
+    Sleep::assertSequence([Sleep::for(500)->milliseconds()]);
+});
+
 it('reports delayed and stalled states as nonterminal until the earlier deadline', function (): void {
     Sleep::fake(true, true);
     config()->set('firecrawl-librarium.expected_duration_seconds', 1);
@@ -627,21 +747,25 @@ it('fails deterministic validation for incomplete ordinary output and oversized 
     'unknown field' => [['raw_payload' => 'forbidden']],
 ]);
 
-it('reports only invalid field paths without leaking rejected provider values', function (): void {
+it('reports only invalid citation field paths without leaking rejected provider values', function (string $url): void {
     bindSdk(sdkWith([
         ['success' => true, 'id' => 'agent-job-1'],
         ['success' => true, 'status' => 'completed', 'data' => observation([
-            'citations' => [['url' => 'not-a-url', 'excerpt' => 'secret-provider-value']],
+            'citations' => [['url' => $url, 'excerpt' => 'secret-provider-value']],
         ])],
     ]));
 
     expect(fn () => app(FirecrawlDriver::class)->run($this->request(['mode' => 'agent'])))
         ->toThrow(function (DriverException $exception): void {
             expect($exception->getMessage())->toContain('Invalid fields: citations.0.url.')
-                ->not->toContain('not-a-url')
+                ->not->toContain('consumer')
+                ->not->toContain('secret@example.com')
                 ->not->toContain('secret-provider-value');
         });
-});
+})->with([
+    'malformed URL' => 'not-a-url',
+    'URL userinfo' => 'https://consumer:secret@example.com/source',
+]);
 
 it('normalizes omitted optional artifacts to no evidence receipts', function (): void {
     $observation = observation();

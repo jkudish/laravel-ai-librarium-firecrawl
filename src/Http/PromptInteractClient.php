@@ -8,6 +8,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Jkudish\LaravelAiLibrarium\Collection\Enums\Operation;
 use Jkudish\LaravelAiLibrarium\Exceptions\DriverException;
 use Jkudish\LaravelAiLibrarium\Execution\DriverRequest;
 
@@ -55,11 +56,13 @@ final readonly class PromptInteractClient
                     'timeout' => min(120, $remaining),
                 ]);
         } catch (ConnectionException) {
+            $request->captureNoResponse(Operation::Inline);
             throw CarbonImmutable::now()->greaterThanOrEqualTo($request->deadline)
                 ? $this->deadlineExceeded()
                 : new DriverException('firecrawl.connection', 'Firecrawl could not be reached.');
         }
 
+        $request->captureResponse($response);
         $json = $this->json($response);
         if (CarbonImmutable::now()->greaterThanOrEqualTo($request->deadline)) {
             throw $this->deadlineExceeded();
