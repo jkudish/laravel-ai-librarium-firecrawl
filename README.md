@@ -1,5 +1,13 @@
 # Laravel AI Librarium: Firecrawl
 
+[![Packagist version](https://img.shields.io/packagist/v/jkudish/laravel-ai-librarium-firecrawl)](https://packagist.org/packages/jkudish/laravel-ai-librarium-firecrawl)
+[![PHP version](https://img.shields.io/packagist/dependency-v/jkudish/laravel-ai-librarium-firecrawl/php)](composer.json)
+[![License: MIT](https://img.shields.io/packagist/l/jkudish/laravel-ai-librarium-firecrawl?color=blue)](LICENSE.md)
+
+<p align="center">
+  <img src=".github/librarium-banner.png" alt="librarium: Give your agent more than one source." />
+</p>
+
 This adapter lets [Laravel AI Librarium](https://github.com/jkudish/laravel-ai-librarium) collect answers from AI answer engines, such as ChatGPT and Google AI Overview, by asking them in a Firecrawl browser session.
 
 Firecrawl search is already built into core. Install this package only for browser collection. See the [Firecrawl section on librarium.si](https://librarium.si/docs/php/providers#firecrawl).
@@ -117,7 +125,22 @@ Citations are limited to 20, excerpts to 1,000 characters, and artifact receipts
 - [Sources and AI answer engines](https://librarium.si/docs/php/providers) and [costs and limits](https://librarium.si/docs/php/costs-and-limits) on librarium.si
 - [Librarium spec](https://github.com/jkudish/librarium-spec) for the shared engine catalog and Run schema
 
-Report bugs in [GitHub issues](https://github.com/jkudish/laravel-ai-librarium-firecrawl/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) to work on the adapter.
+Report bugs in [GitHub issues](https://github.com/jkudish/laravel-ai-librarium-firecrawl/issues).
+
+## The Librarium family
+
+- [Librarium](https://github.com/jkudish/librarium): the JavaScript CLI, MCP server and library (`npm install -g librarium`).
+- [Laravel AI Librarium](https://github.com/jkudish/laravel-ai-librarium): the Laravel package (`composer require jkudish/laravel-ai-librarium`).
+- [librarium-spec](https://github.com/jkudish/librarium-spec): the shared Run schemas, source catalog and conformance fixtures.
+- [librarium.si](https://librarium.si): documentation for all of them.
+
+## Sponsoring
+
+If you find this adapter useful, consider becoming a [sponsor](https://github.com/sponsors/jkudish) or [donating](https://stripe.com/@jkudish).
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to work on the code. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 
